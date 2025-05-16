@@ -224,33 +224,29 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
         batch_size: Batch size for saving data
     """
     # Read the metadata CSV file using polars
-    df = pl.read_csv(csv_path, separator='|')
+    # Assume comma-separated and headers are present by default
+    df = pl.read_csv(csv_path)
     
     # Create a dataset from the dataframe
     dataset = []
     for i, row in enumerate(df.iter_rows(named=True)):
-        if len(row) < 2:
-            logger.warning(f"Skipping row {i+1} due to insufficient columns (expected at least 2): {row}")
-            continue
-
-        # Assuming no header in CSV, Polars names columns column_0, column_1, etc.
-        # Based on previous errors, transcript is in column_0, audio_file_name in column_1.
-        transcript = row.get('column_0', '').strip()
-        audio_file_name = row.get('column_1', '').strip()
-        # Assuming speaker name might be in column_2 if it exists, or use a default.
-        # If your CSV has a specific speaker column name and a header, use that (e.g., row.get('actual_speaker_column_name', 'default_speaker'))
-        speaker_name = row.get('column_2', 'default_speaker').strip() 
+        # Expecting columns: 'text', 'audio_file', 'speaker_name'
+        # The row.get('column_x') access was for headerless CSVs.
+        # Now using actual expected column names.
+        transcript = row.get('text', '').strip()
+        audio_file_name = row.get('audio_file', '').strip() 
+        speaker_name = row.get('speaker_name', 'default_speaker').strip() 
 
         if not transcript:
-            logger.warning(f"Skipping empty transcript for audio file candidate: {audio_file_name}")
+            logger.warning(f"Skipping row {i+1} due to empty transcript. Audio file candidate: '{audio_file_name}'")
             continue
 
         if not audio_file_name:
-            logger.warning(f"Skipping empty audio file name for transcript: {transcript[:50]}...")
+            logger.warning(f"Skipping row {i+1} due to empty audio file name. Transcript: '{transcript[:50]}...'")
             continue
             
         if not audio_file_name.startswith('wavs/'):
-            logger.warning(f"Audio file path '{audio_file_name}' does not start with 'wavs/'. Skipping transcript: {transcript[:50]}...")
+            logger.warning(f"Audio file path '{audio_file_name}' in CSV does not start with 'wavs/'. Skipping transcript: {transcript[:50]}...")
             continue
             
         audio_path = os.path.join(wavs_dir, audio_file_name.replace('wavs/', '', 1)) # Replace only the first instance

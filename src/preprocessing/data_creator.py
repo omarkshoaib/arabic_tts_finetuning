@@ -225,7 +225,7 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
     """
     # Read the metadata CSV file using polars
     # Assume comma-separated and headers are present by default
-    df = pl.read_csv(csv_path)
+    df = pl.read_csv(csv_path, separator='|', truncate_ragged_lines=True)
     
     # Create a dataset from the dataframe
     dataset = []

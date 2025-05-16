@@ -5,8 +5,7 @@ set -e  # Exit on error
 
 # Default values
 MODE="all"  # all, preprocess, train, or inference
-DATA_DIR="./data_ottus-20250505T133830Z-001/data_ottus"
-PROCESSED_DIR="./data/processed"
+DATA_DIR="/content/drive/MyDrive/Address/data_ottus"PROCESSED_DIR="./data/processed"
 MODELS_DIR="./models/arabic_sales_tts"
 OUTPUT_DIR="./outputs"
 TRAIN_CONFIG="./configs/train_config.yaml"
@@ -85,16 +84,15 @@ run_preprocess() {
   echo "Raw data dir: $DATA_DIR"
   echo "Processed data dir: $PROCESSED_DIR"
   
-  python3 src/preprocessing/process_dataset.py \
+  log_message "INFO" "Starting preprocessing..."
+  python src/preprocessing/process_dataset.py \
     --data_dir "$DATA_DIR" \
     --output_dir "$PROCESSED_DIR" \
-    --metadata_file "metadata_train.csv" \
-    --audio_dir "wavs" \
-    --whisper_model "medium" \
-    --language "ar" \
-    --batch_size 8
-  
-  echo "Preprocessing complete!"
+    --metadata_file "$METADATA_FILE" \
+    --model_tokenizer "$MODEL_TOKENIZER_PATH" \
+    --whisper_model "$WHISPER_MODEL" \
+    --batch_size "$BATCH_SIZE"
+  log_message "INFO" "Preprocessing finished."
 }
 
 # Function for training

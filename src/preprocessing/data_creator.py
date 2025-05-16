@@ -235,7 +235,9 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
         # Now using actual expected column names.
         transcript = row.get('text', '').strip()
         audio_file_name = row.get('audio_file', '').strip() 
-        speaker_name = row.get('speaker_name', 'default_speaker').strip() 
+        speaker_name_val = row.get('speaker_name') # Get value, could be None if column exists but is empty
+        speaker_name = speaker_name_val if speaker_name_val is not None else 'default_speaker'
+        speaker_name = speaker_name.strip()
 
         if not transcript:
             logger.warning(f"Skipping row {i+1} due to empty transcript. Audio file candidate: '{audio_file_name}'")

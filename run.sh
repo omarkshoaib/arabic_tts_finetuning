@@ -7,9 +7,18 @@ set -e  # Exit on error
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR" || exit 1
 
+# --- Logging ---
+log_message() {
+  local type="$1"
+  local message="$2"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') | $type | $message"
+}
+# --- End Logging ---
+
 # Default values
 MODE="all"  # all, preprocess, train, or inference
-DATA_DIR="/content/drive/MyDrive/Address/data_ottus"PROCESSED_DIR="./data/processed"
+DATA_DIR="/content/drive/MyDrive/Address/data_ottus" # Default for Colab, can be overridden
+PROCESSED_DIR="./data/processed"
 MODELS_DIR="./models/arabic_sales_tts"
 OUTPUT_DIR="./outputs"
 TRAIN_CONFIG="./configs/train_config.yaml"

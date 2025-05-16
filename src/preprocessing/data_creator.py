@@ -228,18 +228,24 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
     
     # Create a dataset from the dataframe
     dataset = []
-    for row in df.iter_rows(named=True):
-        audio_file = row.get('audio_file', '')
-        if not audio_file.startswith('wavs/'):
-            logger.warning(f"Skipping invalid audio file path: {audio_file}")
+    for i, row in enumerate(df.iter_rows(named=True)):
+        if len(row) < 2:
+            logger.warning(f"Skipping row {i+1} due to insufficient columns: {row}")
+            continue
+
+        # Swapped based on observed error: transcription seems to be in the first column, filename in the second.
+        transcript = row[0].strip()
+        audio_file_name = row[1].strip()
+
+        if not audio_file_name.startswith('wavs/'):
+            logger.warning(f"Skipping invalid audio file path: {audio_file_name}")
             continue
             
-        text = row.get('text', '')
-        if not text:
-            logger.warning(f"Skipping empty transcript for {audio_file}")
+        if not transcript:
+            logger.warning(f"Skipping empty transcript for {audio_file_name}")
             continue
             
-        audio_path = os.path.join(wavs_dir, audio_file.replace('wavs/', ''))
+        audio_path = os.path.join(wavs_dir, audio_file_name.replace('wavs/', ''))
         if not os.path.exists(audio_path):
             logger.warning(f"Audio file not found: {audio_path}")
             continue
@@ -255,8 +261,8 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
                     'array': array,
                     'sampling_rate': sample_rate
                 },
-                'text': text,
-                'speaker_name': row.get('speaker_name', '')
+                'text': transcript,
+                'speaker_name': row['speaker_name']
             })
         except Exception as e:
             logger.error(f"Error reading audio file {audio_path}: {e}")

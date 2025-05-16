@@ -1,0 +1,19 @@
+# Inference configuration for Arabic sales TTS
+
+# Model settings
+model_path: "../models/arabic_sales_tts"  # Path to the fine-tuned model or LoRA adapter
+use_lora: true  # Whether the model_path points to a LoRA adapter
+base_model: "OuteAI/Llama-OuteTTS-1.0-1B"  # Base model for LoRA
+
+# Generation settings
+speaker: "salesperson"  # Speaker name
+language: "ar"  # Language code (ar for Arabic)
+top_p: 0.9  # Top-p sampling parameter
+temperature: 0.7  # Temperature for sampling
+repetition_penalty: 1.2  # Repetition penalty parameter
+max_new_tokens: 1024  # Maximum number of new tokens to generate
+sample_rate: 24000  # Sample rate of the output audio
+
+# Example text (can be overridden by command-line args)
+text: "طبعا عندنا مثلا شقق بمساحة مئة و خمسون متر مربع"
+output_file: "../outputs/sample_output.wav" 

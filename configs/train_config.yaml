@@ -1,0 +1,32 @@
+# Training configuration for Arabic sales TTS fine-tuning
+
+# Model settings
+model_name: "OuteAI/Llama-OuteTTS-1.0-1B"  # Base model to fine-tune
+max_seq_length: 2048  # Maximum sequence length for training
+
+# Data settings
+data_dir: "../data/processed"  # Directory containing processed parquet files
+output_dir: "../models/arabic_sales_tts"  # Directory to save the fine-tuned model
+val_split: 0.05  # Fraction of data to use for validation
+
+# Training parameters
+num_epochs: 5  # Number of training epochs
+batch_size: 1  # Batch size for training
+gradient_accumulation_steps: 8  # Number of steps to accumulate gradients
+learning_rate: 2e-5  # Learning rate for training
+save_steps: 100  # How often to save the model
+
+# LoRA parameters
+lora_r: 128  # LoRA rank
+lora_alpha: 128  # LoRA alpha
+lora_target_modules:  # List of modules to apply LoRA to
+  - "q_proj"
+  - "v_proj"
+  - "k_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+
+# System
+seed: 42  # Random seed for reproducibility 

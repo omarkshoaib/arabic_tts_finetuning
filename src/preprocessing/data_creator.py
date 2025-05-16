@@ -230,22 +230,30 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
     dataset = []
     for i, row in enumerate(df.iter_rows(named=True)):
         if len(row) < 2:
-            logger.warning(f"Skipping row {i+1} due to insufficient columns: {row}")
+            logger.warning(f"Skipping row {i+1} due to insufficient columns (expected at least 2): {row}")
             continue
 
-        # Swapped based on observed error: transcription seems to be in the first column, filename in the second.
-        transcript = row[0].strip()
-        audio_file_name = row[1].strip()
+        # Assuming no header in CSV, Polars names columns column_0, column_1, etc.
+        # Based on previous errors, transcript is in column_0, audio_file_name in column_1.
+        transcript = row.get('column_0', '').strip()
+        audio_file_name = row.get('column_1', '').strip()
+        # Assuming speaker name might be in column_2 if it exists, or use a default.
+        # If your CSV has a specific speaker column name and a header, use that (e.g., row.get('actual_speaker_column_name', 'default_speaker'))
+        speaker_name = row.get('column_2', 'default_speaker').strip() 
 
-        if not audio_file_name.startswith('wavs/'):
-            logger.warning(f"Skipping invalid audio file path: {audio_file_name}")
-            continue
-            
         if not transcript:
-            logger.warning(f"Skipping empty transcript for {audio_file_name}")
+            logger.warning(f"Skipping empty transcript for audio file candidate: {audio_file_name}")
+            continue
+
+        if not audio_file_name:
+            logger.warning(f"Skipping empty audio file name for transcript: {transcript[:50]}...")
             continue
             
-        audio_path = os.path.join(wavs_dir, audio_file_name.replace('wavs/', ''))
+        if not audio_file_name.startswith('wavs/'):
+            logger.warning(f"Audio file path '{audio_file_name}' does not start with 'wavs/'. Skipping transcript: {transcript[:50]}...")
+            continue
+            
+        audio_path = os.path.join(wavs_dir, audio_file_name.replace('wavs/', '', 1)) # Replace only the first instance
         if not os.path.exists(audio_path):
             logger.warning(f"Audio file not found: {audio_path}")
             continue
@@ -262,7 +270,7 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
                     'sampling_rate': sample_rate
                 },
                 'text': transcript,
-                'speaker_name': row['speaker_name']
+                'speaker_name': speaker_name # Use the extracted or default speaker name
             })
         except Exception as e:
             logger.error(f"Error reading audio file {audio_path}: {e}")

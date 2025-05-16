@@ -165,11 +165,13 @@ run_preprocess() {
   
   log_message "INFO" "Starting preprocessing..."
   
-  # Call process_dataset.py assuming it takes data_dir and metadata_filename
+  # Construct full path to the metadata file
+  METADATA_FULL_PATH="${DATA_DIR}/${METADATA_FILE_NAME}"
+
   python3 "${SCRIPT_DIR}/src/preprocessing/process_dataset.py" \
     --data_dir "${DATA_DIR}" \
     --output_dir "${PROCESSED_DIR}" \
-    --metadata_filename "${METADATA_FILE_NAME}" \
+    --metadata_file "${METADATA_FULL_PATH}" \
     --model_tokenizer "${MODEL_TOKENIZER_PATH}" \
     --whisper_model "${WHISPER_MODEL}" \
     --batch_size "${BATCH_SIZE}"

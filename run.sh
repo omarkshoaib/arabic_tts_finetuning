@@ -154,22 +154,25 @@ create_dirs() {
 # Function for preprocessing
 run_preprocess() {
   echo "===== PREPROCESSING DATA ====="
-  echo "Raw data dir: $DATA_DIR"
-  echo "Processed data dir: $PROCESSED_DIR"
+  # DATA_DIR is set from run.sh CLI arguments or default.
+  # PROCESSED_DIR is globally set to ./data/processed
+  # METADATA_FILE_NAME is set (e.g., metadata_train_cleaned.csv)
+  # MODEL_TOKENIZER_PATH, WHISPER_MODEL, BATCH_SIZE are set.
+
+  echo "Raw data base dir: ${DATA_DIR}"
+  echo "Metadata file name to be found in raw data dir: ${METADATA_FILE_NAME}"
+  echo "Processed data output dir: ${PROCESSED_DIR}"
   
   log_message "INFO" "Starting preprocessing..."
-  RAW_DATA_DIR="${DATA_DIR}"
-  PROCESSED_DIR="${PROJECT_DIR}/data/${PROCESSED_DIR_NAME}"
-  METADATA_FILE="${RAW_DATA_DIR}/${METADATA_FILE_NAME}"
-  echo "Raw data dir: ${RAW_DATA_DIR}"
-  echo "Processed data dir: ${PROCESSED_DIR}"
+  
+  # Call process_dataset.py assuming it takes data_dir and metadata_filename
   python3 "${SCRIPT_DIR}/src/preprocessing/process_dataset.py" \
-    --metadata "${METADATA_FILE}" \
-    --wavs_dir "${RAW_DATA_DIR}/wavs" \
+    --data_dir "${DATA_DIR}" \
     --output_dir "${PROCESSED_DIR}" \
-    --model_tokenizer "$MODEL_TOKENIZER_PATH" \
-    --whisper_model "$WHISPER_MODEL" \
-    --batch_size "$BATCH_SIZE"
+    --metadata_filename "${METADATA_FILE_NAME}" \
+    --model_tokenizer "${MODEL_TOKENIZER_PATH}" \
+    --whisper_model "${WHISPER_MODEL}" \
+    --batch_size "${BATCH_SIZE}"
   log_message "INFO" "Preprocessing finished."
 }
 

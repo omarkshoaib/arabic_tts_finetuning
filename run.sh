@@ -23,8 +23,14 @@ MODELS_DIR="./models/arabic_sales_tts"
 OUTPUT_DIR="./outputs"
 TRAIN_CONFIG="./configs/train_config.yaml"
 INFERENCE_CONFIG="./configs/inference_config.yaml"
-TEXT=""
-OUTPUT_FILE=""
+TEXT="" # For inference
+OUTPUT_FILE="" # For inference
+
+# Variables for preprocessing, with defaults matching process_dataset.py
+METADATA_FILE="metadata_train.csv"
+MODEL_TOKENIZER_PATH="OuteAI/Llama-OuteTTS-1.0-1B"
+WHISPER_MODEL="medium"
+BATCH_SIZE="32" # Default batch_size for preprocessing
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -65,6 +71,22 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_FILE="$2"
       shift 2
       ;;
+    --metadata-file)
+      METADATA_FILE="$2"
+      shift 2
+      ;;
+    --model-tokenizer) # Corresponds to MODEL_TOKENIZER_PATH for the script
+      MODEL_TOKENIZER_PATH="$2"
+      shift 2
+      ;;
+    --whisper-model)
+      WHISPER_MODEL="$2"
+      shift 2
+      ;;
+    --batch-size) # For preprocessing batch_size
+      BATCH_SIZE="$2"
+      shift 2
+      ;;
     --help)
       echo "Usage: $0 [options]"
       echo ""
@@ -78,6 +100,10 @@ while [[ $# -gt 0 ]]; do
       echo "  --inference-config FILE Path to inference config file (default: ./configs/inference_config.yaml)"
       echo "  --text TEXT            Text for inference (only for inference mode)"
       echo "  --output-file FILE     Output audio file path (only for inference mode)"
+      echo "  --metadata-file FILE   Metadata CSV file name (default: metadata_train.csv, for preprocessing)"
+      echo "  --model-tokenizer PATH Model tokenizer path for preprocessing (default: OuteAI/Llama-OuteTTS-1.0-1B)"
+      echo "  --whisper-model MODEL  Whisper model name for preprocessing (default: medium)"
+      echo "  --batch-size NUM       Batch size for preprocessing (default: 32)"
       echo "  --help                 Show this help message and exit"
       exit 0
       ;;

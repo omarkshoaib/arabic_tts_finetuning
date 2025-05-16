@@ -3,6 +3,10 @@
 
 set -e  # Exit on error
 
+# cd to the script's own directory to make relative paths work reliably
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+cd "$SCRIPT_DIR" || exit 1
+
 # Default values
 MODE="all"  # all, preprocess, train, or inference
 DATA_DIR="/content/drive/MyDrive/Address/data_ottus"PROCESSED_DIR="./data/processed"
@@ -75,8 +79,41 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Create directories if they don't exist
-mkdir -p "$PROCESSED_DIR" "$MODELS_DIR" "$OUTPUT_DIR"
+# Function to create necessary directories
+create_dirs() {
+  log_message "INFO" "Ensuring base directories exist..."
+
+  # Validate and create PROCESSED_DIR
+  if [ -z "$PROCESSED_DIR" ]; then
+    log_message "ERROR" "PROCESSED_DIR is not set. Cannot create directory."
+    exit 1
+  fi
+  PROCESSED_DIR_BASE=$(dirname "$PROCESSED_DIR")
+  if [ -n "$PROCESSED_DIR_BASE" ] && [ "$PROCESSED_DIR_BASE" != "." ] && [ "$PROCESSED_DIR_BASE" != "/" ]; then
+    mkdir -p "$PROCESSED_DIR_BASE"
+  fi
+  mkdir -p "$PROCESSED_DIR"
+
+  # Validate and create MODELS_DIR
+  if [ -z "$MODELS_DIR" ]; then
+    log_message "ERROR" "MODELS_DIR is not set. Cannot create directory."
+    exit 1
+  fi
+  MODELS_DIR_BASE=$(dirname "$MODELS_DIR")
+  if [ -n "$MODELS_DIR_BASE" ] && [ "$MODELS_DIR_BASE" != "." ] && [ "$MODELS_DIR_BASE" != "/" ]; then
+    mkdir -p "$MODELS_DIR_BASE"
+  fi
+  mkdir -p "$MODELS_DIR"
+
+  # Validate and create OUTPUT_DIR
+  if [ -z "$OUTPUT_DIR" ]; then
+    log_message "ERROR" "OUTPUT_DIR is not set. Cannot create directory."
+    exit 1
+  fi
+  mkdir -p "$OUTPUT_DIR"
+
+  log_message "INFO" "Base directories ensured."
+}
 
 # Function for preprocessing
 run_preprocess() {
@@ -143,7 +180,10 @@ run_inference() {
   echo "Inference complete! Output saved to: $OUTPUT_FILE"
 }
 
-# Run the appropriate mode
+# Call function to create directories first
+create_dirs
+
+# Execute based on mode
 case $MODE in
   "all")
     run_preprocess

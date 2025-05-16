@@ -27,7 +27,7 @@ TEXT="" # For inference
 OUTPUT_FILE="" # For inference
 
 # Variables for preprocessing, with defaults matching process_dataset.py
-METADATA_FILE="metadata_train.csv"
+METADATA_FILE="${RAW_DATA_DIR}/metadata_train_cleaned.csv"
 MODEL_TOKENIZER_PATH="OuteAI/Llama-OuteTTS-1.0-1B"
 WHISPER_MODEL="medium"
 BATCH_SIZE="32" # Default batch_size for preprocessing

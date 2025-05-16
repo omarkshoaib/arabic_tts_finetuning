@@ -233,8 +233,14 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
         # Expecting columns: 'text', 'audio_file', 'speaker_name'
         # The row.get('column_x') access was for headerless CSVs.
         # Now using actual expected column names.
-        transcript = row.get('text', '').strip()
-        audio_file_name = row.get('audio_file', '').strip() 
+        text_val = row.get('text') # Get value, could be None
+        transcript = text_val if text_val is not None else ''
+        transcript = transcript.strip()
+
+        audio_file_name_val = row.get('audio_file') # Get value, could be None
+        audio_file_name = audio_file_name_val if audio_file_name_val is not None else ''
+        audio_file_name = audio_file_name.strip()
+        
         speaker_name_val = row.get('speaker_name') # Get value, could be None if column exists but is empty
         speaker_name = speaker_name_val if speaker_name_val is not None else 'default_speaker'
         speaker_name = speaker_name.strip()

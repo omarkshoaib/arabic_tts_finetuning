@@ -17,7 +17,7 @@ log_message() {
 
 # Default values
 MODE="all"  # all, preprocess, train, or inference
-DATA_DIR="/content/drive/MyDrive/Address/data_ottus" # Default for Colab, can be overridden
+DATA_DIR="/content/drive/MyDrive/data_ottus" # Default for Colab, can be overridden
 PROCESSED_DIR="./data/processed"
 MODELS_DIR="./models/arabic_sales_tts"
 OUTPUT_DIR="./outputs"

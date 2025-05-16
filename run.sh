@@ -27,7 +27,8 @@ TEXT="" # For inference
 OUTPUT_FILE="" # For inference
 
 # Variables for preprocessing, with defaults matching process_dataset.py
-METADATA_FILE="${RAW_DATA_DIR}/metadata_train_cleaned.csv"
+METADATA_FILE_NAME="metadata_train.csv" # Default original metadata file
+PROCESSED_DIR_NAME="processed"
 MODEL_TOKENIZER_PATH="OuteAI/Llama-OuteTTS-1.0-1B"
 WHISPER_MODEL="medium"
 BATCH_SIZE="32" # Default batch_size for preprocessing
@@ -72,7 +73,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --metadata-file)
-      METADATA_FILE="$2"
+      METADATA_FILE_NAME="$2"
       shift 2
       ;;
     --model-tokenizer) # Corresponds to MODEL_TOKENIZER_PATH for the script
@@ -157,10 +158,15 @@ run_preprocess() {
   echo "Processed data dir: $PROCESSED_DIR"
   
   log_message "INFO" "Starting preprocessing..."
-  python src/preprocessing/process_dataset.py \
-    --data_dir "$DATA_DIR" \
-    --output_dir "$PROCESSED_DIR" \
-    --metadata_file "$METADATA_FILE" \
+  RAW_DATA_DIR="${DATA_DIR}"
+  PROCESSED_DIR="${PROJECT_DIR}/data/${PROCESSED_DIR_NAME}"
+  METADATA_FILE="${RAW_DATA_DIR}/${METADATA_FILE_NAME}"
+  echo "Raw data dir: ${RAW_DATA_DIR}"
+  echo "Processed data dir: ${PROCESSED_DIR}"
+  python3 "${SCRIPT_DIR}/src/preprocessing/process_dataset.py" \
+    --metadata "${METADATA_FILE}" \
+    --wavs_dir "${RAW_DATA_DIR}/wavs" \
+    --output_dir "${PROCESSED_DIR}" \
     --model_tokenizer "$MODEL_TOKENIZER_PATH" \
     --whisper_model "$WHISPER_MODEL" \
     --batch_size "$BATCH_SIZE"

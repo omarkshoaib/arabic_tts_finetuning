@@ -16,6 +16,8 @@ import io
 from datasets import Dataset
 from loguru import logger
 import argparse
+import glob
+import re
 
 # OuteTTS v3 imports
 from outetts.version.v3.audio_processor import AudioProcessor
@@ -209,6 +211,20 @@ class DataCreatorV3:
         
         logger.info(f"Saved {len(data)} items in {len(batches)} batches to {output_path}")
 
+def sanitize_path_for_glob(path):
+    """
+    Sanitize a file path for use with glob.glob by escaping special characters.
+    This helps when dealing with filenames containing parentheses, brackets, etc.
+    """
+    # Characters that need to be escaped for glob patterns
+    special_chars = ['*', '?', '[', ']', '{', '}', '(', ')', '!']
+    
+    # Escape each special character
+    for char in special_chars:
+        path = path.replace(char, f'[{char}]')
+    
+    return path
+
 def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="OuteAI/Llama-OuteTTS-1.0-1B", 
                        whisper_model="turbo", device=None, batch_size=1000):
     """
@@ -224,15 +240,11 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
         batch_size: Batch size for saving data
     """
     # Read the metadata CSV file using polars
-    # Assume comma-separated and headers are present by default
-    df = pl.read_csv(csv_path, separator='|', truncate_ragged_lines=True)
+    df = pl.read_csv(csv_path, separator=",", truncate_ragged_lines=True)
     
     # Create a dataset from the dataframe
     dataset = []
     for i, row in enumerate(df.iter_rows(named=True)):
-        # Expecting columns: 'text', 'audio_file', 'speaker_name'
-        # The row.get('column_x') access was for headerless CSVs.
-        # Now using actual expected column names.
         text_val = row.get('text') # Get value, could be None
         transcript = text_val if text_val is not None else ''
         transcript = transcript.strip()
@@ -257,10 +269,27 @@ def process_csv_metadata(csv_path, wavs_dir, output_path, model_tokenizer_path="
             logger.warning(f"Audio file path '{audio_file_name}' in CSV does not start with 'wavs/'. Skipping transcript: {transcript[:50]}...")
             continue
             
-        audio_path = os.path.join(wavs_dir, audio_file_name.replace('wavs/', '', 1)) # Replace only the first instance
-        if not os.path.exists(audio_path):
+        # Extract the filename from the path (remove 'wavs/' prefix)
+        audio_filename = audio_file_name.replace('wavs/', '', 1)
+        
+        # Construct the full path to the audio file
+        audio_path = os.path.join(wavs_dir, audio_filename)
+        
+        # Check if the file exists using glob to handle special characters
+        sanitized_path = sanitize_path_for_glob(audio_path)
+        matching_files = glob.glob(sanitized_path)
+        
+        if not matching_files:
+            # Try a more flexible approach if the first method fails
+            pattern = os.path.join(wavs_dir, re.escape(audio_filename).replace('\\(', '(').replace('\\)', ')'))
+            matching_files = glob.glob(pattern)
+        
+        if not matching_files:
             logger.warning(f"Audio file not found: {audio_path}")
             continue
+            
+        # Use the first matching file
+        audio_path = matching_files[0]
             
         # Read the audio file
         try:

@@ -127,19 +127,15 @@ class OuteTTSGeneratorV3:
         # For simple text-to-speech, it needs the text, speaker, and lang.
         # It handles normalization and formatting.
         
-        # We need to construct the text part of the prompt that the model expects to complete.
-        # This usually involves language, speaker, and the input text, followed by generation start tokens.
-        # The PromptProcessor.get_inference_prompt might be what we need, or construct manually.
-        # Example: prompt_dict = {"text": text, "speaker_name": speaker_name, "lang": lang}
-        # inference_prompt_details = self.prompt_processor.get_inference_prompt(prompt_dict)
-        # prompt_text_part = inference_prompt_details["prompt_text_part"] 
-        # Or more directly:
+        # In OuteTTS v1.0, the prompt format should be:
+        # <|lang:{lang}|>[{speaker_name}]:{text}<|startmedia|><|dac|>
         prompt_text_part = f"<|lang:{lang}|>[{speaker_name}]:{text}<|startmedia|><|dac|>"
         
         logger.info(f"Processed text for prompt: {prompt_text_part[:150]}...")
         
         inputs = self.tokenizer(prompt_text_part, return_tensors="pt").to(self.device)
         input_ids_length = inputs.input_ids.shape[1]
+        logger.info(f"Input prompt length in tokens: {input_ids_length}")
 
         logger.info("Generating DAC codes...")
         with torch.no_grad():
@@ -168,6 +164,12 @@ class OuteTTSGeneratorV3:
         # Based on Oute_TTS_(1B).ipynb inference logic
         logger.info("Converting generated token IDs to DAC codes...")
         tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        
+        # Log the first 20 tokens to see what's being generated
+        logger.info("First 20 tokens of generation:")
+        for i, token in enumerate(tokens[:20]):
+            logger.info(f"  Token {i}: '{token}' (ID: {generated_token_ids[i] if i < len(generated_token_ids) else 'N/A'})")
+        
         decoded_dac_codes = []
         
         # Hardcoded DAC offset ID as used in the Oute_TTS_(1B) notebook

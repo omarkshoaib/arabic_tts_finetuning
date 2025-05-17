@@ -178,32 +178,45 @@ class OuteTTSGeneratorV3:
             # OuteTTS v1.0 and DAC typically use a vocabulary of DAC tokens (e.g., 0-1023 for Encodec).
             # The model should generate these token IDs directly.
             
-            # Let's assume the generated_token_ids ARE the DAC code IDs.
-            # We need to check if they are within the DAC's expected range.
-            # The prompt_processor or dac interface should clarify the expected format.
-
-            # Placeholder: This is a critical part that needs to align with OuteTTS v3's DAC tokenization.
-            # If generated_token_ids are directly usable (e.g. integers from 0-1023 for Encodec)
-            # and DacInterface.decode expects a flat list/tensor of these integers.
-            
             # Let's assume `generated_token_ids` contains the sequence of DAC code indices.
-            # We need to filter out any EOS or PAD tokens that might have been generated if max_new_tokens was reached.
+            # We need to filter out any EOS or PAD tokens that might have been generated if max_new_tokens was reached,
+            # and also ensure the token IDs are within the valid range for the DAC codebook.
             
             valid_dac_token_ids = []
-            for token_id in generated_token_ids.tolist():
+            dac_codebook_size = -1
+            try:
+                dac_codebook_size = self.dac.model.quantizer.bins
+                logger.info(f"DAC model codebook size (bins): {dac_codebook_size}")
+            except AttributeError:
+                logger.error("Could not determine dac_codebook_size from self.dac.model.quantizer.bins. This is critical for filtering.")
+                # Default for Encodec/DAC is often 1024. This is a risky fallback.
+                logger.warning("Attempting to use a default dac_codebook_size=1024 due to AttributeError. This might be incorrect.")
+                dac_codebook_size = 1024
+
+            if dac_codebook_size <= 0:
+                logger.error(f"Invalid DAC codebook size: {dac_codebook_size}. Cannot filter tokens.")
+                return False
+
+            for token_id_val in generated_token_ids.tolist():
+                token_id = int(token_id_val) # Ensure it's an int for comparison
                 if token_id == self.tokenizer.eos_token_id or token_id == self.tokenizer.pad_token_id:
+                    logger.info(f"Encountered EOS/PAD token ({token_id}), stopping token collection.")
                     break # Stop if we hit EOS/PAD
-                # Check if token_id is a valid DAC code index.
-                # This depends on the specific DAC used by OuteTTS v1.0.
-                # For now, let's assume all generated non-EOS/PAD tokens are DAC indices.
-                # A more robust check would be `0 <= token_id < dac_vocab_size`.
+                
+                # Check if token_id is a valid DAC code index for its codebook
+                if not (0 <= token_id < dac_codebook_size):
+                    logger.warning(
+                        f"Generated token ID {token_id} is out of DAC codebook range (0 to {dac_codebook_size-1}). Skipping token."
+                    )
+                    continue # Skip this invalid token
+                
                 valid_dac_token_ids.append(token_id)
 
             if not valid_dac_token_ids:
-                logger.error("No valid DAC token IDs were generated after EOS/PAD filtering.")
+                logger.error("No valid DAC token IDs were generated after filtering.")
                 return False
 
-            logger.info(f"Number of raw DAC token IDs generated: {len(valid_dac_token_ids)}")
+            logger.info(f"Number of filtered DAC token IDs: {len(valid_dac_token_ids)}")
             
             try:
                 # Determine the number of codebooks from the loaded DAC model

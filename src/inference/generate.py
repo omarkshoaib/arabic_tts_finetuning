@@ -114,8 +114,10 @@ class OuteTTSGeneratorV3:
         speaker_name: str = "default_speaker", # Default speaker tag
         lang: str = "ar", # Explicitly using "lang" as per v3
         top_p: float = 0.9,
-        temperature: float = 0.7,
-        repetition_penalty: float = 1.2,
+        top_k: int = 40, # Added top_k parameter
+        temperature: float = 0.4, # Changed from 0.7 to 0.4 to match notebook
+        repetition_penalty: float = 1.1, # Changed from 1.2 to 1.1
+        min_p: float = 0.05, # Added min_p parameter
         max_new_tokens: int = 2048, # Max tokens for the *entire* output (prompt + generation)
         sample_rate: int = 24000,
     ):
@@ -148,9 +150,11 @@ class OuteTTSGeneratorV3:
                 attention_mask=inputs.attention_mask,
                 max_new_tokens=max_new_tokens, # Max tokens for the DAC codes part
                 do_sample=True,
+                top_k=top_k,
                 top_p=top_p,
                 temperature=temperature,
                 repetition_penalty=repetition_penalty,
+                min_p=min_p,
                 pad_token_id=pad_token_id, # Important for generation
                 eos_token_id=self.tokenizer.eos_token_id, # Ensure generation stops
             )
@@ -271,8 +275,10 @@ def main():
             "max_seq_length": args.max_seq_len,
             # Default generation values
             "top_p": 0.9,
-            "temperature": 0.7,
-            "repetition_penalty": 1.2,
+            "temperature": 0.4, # Changed from 0.7 to 0.4 to match notebook
+            "repetition_penalty": 1.1, # Changed from 1.2 to 1.1
+            "top_k": 40, # Added top_k parameter
+            "min_p": 0.05, # Added min_p parameter
             "max_new_tokens": 1024, # Adjusted for DAC tokens, was 2048
             "sample_rate": 24000, # This should ideally come from DAC's sample_rate
         }
@@ -294,8 +300,10 @@ def main():
         speaker_name=config.get("speaker", "default_speaker"),
         lang=config.get("lang", "ar"),
         top_p=config.get("top_p", 0.9),
-        temperature=config.get("temperature", 0.7),
-        repetition_penalty=config.get("repetition_penalty", 1.2),
+        top_k=config.get("top_k", 40), # Added top_k parameter
+        temperature=config.get("temperature", 0.4), # Changed from 0.7 to 0.4 to match notebook
+        repetition_penalty=config.get("repetition_penalty", 1.1), # Changed from 1.2 to 1.1
+        min_p=config.get("min_p", 0.05), # Added min_p parameter
         max_new_tokens=config.get("max_new_tokens", 1024), # Max DAC tokens
         sample_rate=config.get("sample_rate", 24000) # ideally dac.sample_rate
     )

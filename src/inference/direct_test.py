@@ -89,9 +89,10 @@ def main():
     
     # Debug generated output
     logger.info("---- Full Decoded Output (from generated_ids_trimmed) ----")
-    # Limit printing if too long, but show a good chunk
-    if len(decoded_output) > 2000:
-        logger.info(decoded_output[:1000] + "\\n... (truncated) ...\\n" + decoded_output[-1000:])
+    if not decoded_output:
+        logger.warning("Decoded output is EMPTY!")
+    elif len(decoded_output) > 4000: # Increased length for more context
+        logger.info(decoded_output[:2000] + "\\n... (truncated due to length) ...\\n" + decoded_output[-2000:])
     else:
         logger.info(decoded_output)
     logger.info("---- End of Full Decoded Output ----")
@@ -120,8 +121,9 @@ def main():
         logger.error(f"Too few audio tokens found (c1: {len(c1)}, c2: {len(c2)}). Cannot generate audio.")
         # Log all special tokens found if audio token extraction fails badly
         all_special_tokens = re.findall(r"<\\|[^|]+\\|>", decoded_output)
-        logger.info(f"All special tokens found in decoded_output: {all_special_tokens[:50]}") # Log more
-        return
+        logger.info(f"All special tokens found in decoded_output: {all_special_tokens[:100]}") # Log even more
+        import sys
+        sys.exit(1) # Force exit with error code
     
     # Ensure equal length
     t = min(len(c1), len(c2))
@@ -170,9 +172,14 @@ def main():
         logger.info(f"Created output directory: {output_dir}")
         
     # Save audio file
-    logger.info(f"Saving audio to {OUTPUT_FILE} with sample rate 24000")
-    sf.write(OUTPUT_FILE, audio_numpy, 24000) # OuteTTS standard sample rate is 24kHz
-    logger.info("Done!")
+    if audio_numpy is not None and audio_numpy.size > 0:
+        logger.info(f"Saving audio to {OUTPUT_FILE} with sample rate 24000")
+        sf.write(OUTPUT_FILE, audio_numpy, 24000) # OuteTTS standard sample rate is 24kHz
+        logger.info("Done!")
+    else:
+        logger.error("Audio numpy array was None or empty. Not saving file.")
+        import sys
+        sys.exit(1) # Force exit with error code
 
 if __name__ == "__main__":
     main() 

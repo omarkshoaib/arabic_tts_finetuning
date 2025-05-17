@@ -169,7 +169,9 @@ class OuteTTSGeneratorV3:
         logger.info("Converting generated token IDs to DAC codes...")
         tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
         decoded_dac_codes = []
-        dac_offset_id = self.prompt_processor.audio_processor.dac_offset_id # Should be 32000
+        
+        # Hardcoded DAC offset ID as used in the Oute_TTS_(1B) notebook
+        dac_offset_id = 32000  # This is the offset for v1.0 DAC tokens
         
         logger.info(f"Using DAC offset ID: {dac_offset_id}")
         

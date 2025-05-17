@@ -200,28 +200,50 @@ class OuteTTSGeneratorV3:
                 valid_dac_token_ids.append(token_id)
 
             if not valid_dac_token_ids:
-                logger.error("No valid DAC token IDs were generated.")
+                logger.error("No valid DAC token IDs were generated after EOS/PAD filtering.")
                 return False
-
-            # The DacInterface.decode expects a specific shape, usually (1, num_quantizers, sequence_length) or similar.
-            # Or a flat list if it handles reshaping. This is a MAJOR assumption here.
-            # OuteTTS often uses multiple quantizers. The generated sequence might be interleaved or stacked.
-            # The `AudioProcessor` in v3 or `DacInterface` should provide clues.
-            # For Encodec, it's typically a (num_quantizers, sequence_length) tensor.
-            # If the model generates a flat sequence, we might need to reshape it.
-            # Let's assume for now `self.dac.decode` can handle a flat list of codebook indices
-            # and knows the number of quantizers. This is a simplification.
 
             logger.info(f"Number of raw DAC token IDs generated: {len(valid_dac_token_ids)}")
             
-            # Reshape if necessary. Example: if 8 quantizers, codes should be [N, 8] or [8, N]
-            # This part is highly dependent on the specific DAC architecture and how OuteTTS v1.0 structures its output.
-            # The `AudioProcessor`'s `decode_audio_codes` or similar method in OuteTTS source would be the definitive reference.
-            # For now, we pass the flat list. This MIGHT FAIL OR PRODUCE NOISE if reshape is needed.
-            dac_codes_tensor = torch.tensor([valid_dac_token_ids], dtype=torch.long, device=self.device)
-            # The shape might need to be (1, num_quantizers, T) or (num_quantizers, T)
-            # Example: if dac has 4 quantizers: dac_codes_tensor = dac_codes_tensor.view(1, 4, -1)
+            try:
+                # Determine the number of codebooks from the loaded DAC model
+                n_codebooks = self.dac.model.quantizer.n_codebooks
+                logger.info(f"DAC model uses {n_codebooks} codebooks (quantizers).")
+            except AttributeError:
+                logger.error("Could not determine n_codebooks from self.dac.model.quantizer.n_codebooks. This is critical for reshaping.")
+                # As a fallback, for the specific 'ibm-research/DAC.speech.v1.0' (24khz_1.5kbps), n_codebooks is 9.
+                # This is risky if the model changes. Ideally, this should always be found.
+                # Consider making this a parameter or ensuring the dac model object always has this.
+                logger.warning("Attempting to use a default n_codebooks=9 due to AttributeError. This might be incorrect.")
+                n_codebooks = 9 
 
+            if n_codebooks <= 0:
+                logger.error(f"Invalid n_codebooks found or defaulted: {n_codebooks}. Must be positive.")
+                return False
+
+            if len(valid_dac_token_ids) == 0:
+                 logger.error("No valid DAC tokens available before reshaping.")
+                 return False
+
+            # Ensure the number of tokens is divisible by the number of codebooks
+            if len(valid_dac_token_ids) % n_codebooks != 0:
+                num_tokens_to_trim = len(valid_dac_token_ids) % n_codebooks
+                logger.warning(
+                    f"Number of DAC tokens ({len(valid_dac_token_ids)}) is not divisible by "
+                    f"n_codebooks ({n_codebooks}). Trimming {num_tokens_to_trim} tokens from the end."
+                )
+                valid_dac_token_ids = valid_dac_token_ids[:-num_tokens_to_trim]
+            
+            if not valid_dac_token_ids: # Check if trimming made it empty
+                 logger.error("No valid DAC tokens left after attempting to make them divisible by n_codebooks.")
+                 return False
+
+            # Reshape to (batch_size, n_codebooks, sequence_length_per_codebook)
+            # Batch size is 1 for our inference case.
+            dac_codes_tensor = torch.tensor(valid_dac_token_ids, dtype=torch.long, device=self.device)
+            dac_codes_tensor = dac_codes_tensor.view(1, n_codebooks, -1) 
+            logger.info(f"Reshaped DAC codes tensor to: {dac_codes_tensor.shape}")
+            
             # Assuming dac.decode can handle a 2D tensor [1, sequence_length] of DAC indices for now.
             # This is the most likely point of failure if the DAC part is not correctly interfaced.
             

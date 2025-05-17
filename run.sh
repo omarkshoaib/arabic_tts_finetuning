@@ -241,7 +241,7 @@ run_inference() {
 
   # Pass --no-lora to generate.py if the flag was set for run.sh
   if [ "$NO_LORA_FLAG" = true ]; then
-    CMD_PY_ARGS+=(--no-lora)
+    CMD_PY_ARGS+=(--no_lora)
   fi
 
   # Log the command that will be executed

@@ -7,11 +7,20 @@ set -e  # Exit on error
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 cd "$SCRIPT_DIR" || exit 1
 
-# --- Logging ---
+# --- Global Variables & Logging Setup ---
+OUTPUT_DIR="./outputs"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="$OUTPUT_DIR/run_main_$TIMESTAMP.log" # Changed name slightly for clarity
+
+# Ensure OUTPUT_DIR exists *before* defining LOG_FILE path or trying to log to it
+mkdir -p "$OUTPUT_DIR"
+
 log_message() {
   local type="$1"
   local message="$2"
-  echo "$(date '+%Y-%m-%d %H:%M:%S') | $type | $message"
+  local log_line="$(date '+%Y-%m-%d %H:%M:%S') | $type | $message"
+  echo "$log_line" # Echo to stdout (for Colab visibility)
+  echo "$log_line" >> "$LOG_FILE" # Append to the main log file
 }
 # --- End Logging ---
 
@@ -20,7 +29,6 @@ MODE="all"  # all, preprocess, train, or inference
 DATA_DIR="/content/drive/MyDrive/data_ottus" # Default for Colab, can be overridden
 PROCESSED_DIR="./data/processed"
 MODELS_DIR="./models/arabic_sales_tts"
-OUTPUT_DIR="./outputs"
 TRAIN_CONFIG="./configs/train_config.yaml"
 INFERENCE_CONFIG="./configs/inference_config.yaml"
 TEXT="" # For inference
@@ -54,7 +62,10 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --output-dir)
-      OUTPUT_DIR="$2"
+      OUTPUT_DIR="$2" # This will update the global OUTPUT_DIR if provided
+      # Re-evaluate LOG_FILE if OUTPUT_DIR changes via CLI
+      LOG_FILE="$OUTPUT_DIR/run_main_$TIMESTAMP.log"
+      mkdir -p "$OUTPUT_DIR" # Ensure new one exists
       shift 2
       ;;
     --train-config)
@@ -147,10 +158,11 @@ create_dirs() {
   fi
   mkdir -p "$MODELS_DIR"
 
-  # Validate and create OUTPUT_DIR
+  # OUTPUT_DIR is already created when LOG_FILE is defined or when --output-dir is parsed.
+  # Just ensure it is indeed there.
   if [ -z "$OUTPUT_DIR" ]; then
-    log_message "ERROR" "OUTPUT_DIR is not set. Cannot create directory."
-    exit 1
+      log_message "ERROR" "OUTPUT_DIR is not set globally. This should not happen."
+      exit 1
   fi
   mkdir -p "$OUTPUT_DIR"
 
@@ -210,71 +222,64 @@ run_inference() {
   log_message "INFO" "Inference Config file: $INFERENCE_CONFIG"
   log_message "INFO" "Python script path: ${SCRIPT_DIR}/src/inference/generate.py"
   
-  # Define a specific log file for the python script's detailed output
-  PYTHON_SCRIPT_LOG_FILE="$OUTPUT_DIR/generate_py_$(date +%Y%m%d_%H%M%S).log"
+  local python_script_timestamp=$(date +%Y%m%d_%H%M%S) # Local timestamp for this specific log
+  PYTHON_SCRIPT_LOG_FILE="$OUTPUT_DIR/generate_py_$python_script_timestamp.log"
   log_message "INFO" "Detailed Python script log will be at: $PYTHON_SCRIPT_LOG_FILE"
 
   # Update config file with correct model_path
-  # Using | as delimiter for sed because paths might contain /
   sed -i "s|model_path:.*|model_path: \"$MODELS_DIR\"|g" "$INFERENCE_CONFIG"
   
-  # Prepare arguments for generate.py
   CMD_PY_ARGS=()
   CMD_PY_ARGS+=(--config "$INFERENCE_CONFIG")
 
-  # Text to synthesize
-  # If TEXT is provided to run.sh, pass it to generate.py.
-  # Otherwise, generate.py will use text from its own config or its internal default.
   if [ -n "$TEXT" ]; then
     CMD_PY_ARGS+=(--text "$TEXT")
   fi
   
-  # Output file path
-  # If OUTPUT_FILE argument was passed to run.sh, use that.
-  # Otherwise, set a default path within the project's OUTPUT_DIR.
   FINAL_OUTPUT_FILE_PATH=""
   if [ -n "$OUTPUT_FILE" ]; then
     FINAL_OUTPUT_FILE_PATH="$OUTPUT_FILE"
   else
-    # Default output file path if not specified via --output-file
-    FINAL_OUTPUT_FILE_PATH="$OUTPUT_DIR/generated_speech_$(date +%Y%m%d_%H%M%S).wav"
+    FINAL_OUTPUT_FILE_PATH="$OUTPUT_DIR/generated_speech_$python_script_timestamp.wav"
   fi
   
-  # Ensure the directory for the output file exists
   mkdir -p "$(dirname "$FINAL_OUTPUT_FILE_PATH")"
-  
   CMD_PY_ARGS+=(--output_file "$FINAL_OUTPUT_FILE_PATH")
 
-  # Pass --no-lora to generate.py if the flag was set for run.sh
   if [ "$NO_LORA_FLAG" = true ]; then
     CMD_PY_ARGS+=(--no_lora)
   fi
 
-  # Log the command that will be executed
-  # Use printf for safer expansion of arguments, especially if they contain spaces or special chars
   printf "Running command: python3 -u src/inference/generate.py"
   for arg in "${CMD_PY_ARGS[@]}"; do
-    printf " '%s'" "$arg" # Print each argument quoted
+    printf " '%s'" "$arg"
   done
   printf "\n"
 
   # Execute the python script and redirect its output to PYTHON_SCRIPT_LOG_FILE
   if python3 -u "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}" > "$PYTHON_SCRIPT_LOG_FILE" 2>&1; then
     log_message "INFO" "Python script finished successfully (according to exit code)."
-    log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH (verify generate.py behavior)"
+    log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH"
   else
     log_message "ERROR" "Python script failed (non-zero exit code)."
-    log_message "ERROR" "Inference script failed. Check logs above and detailed log below."
+    log_message "ERROR" "Inference script failed. Check detailed log below."
   fi
 
   # Print the detailed log from the python script
   if [ -f "$PYTHON_SCRIPT_LOG_FILE" ]; then
-    log_message "INFO" "Ensuring output directory for main log exists: $OUTPUT_DIR"
-    mkdir -p "$OUTPUT_DIR" # Re-ensure output directory for main log
-    log_message "INFO" "Main log file for appending Python script log: $LOG_FILE"
+    # Ensure main log directory and file are still valid if --output-dir changed things
+    mkdir -p "$OUTPUT_DIR" 
+    # LOG_FILE should be globally defined and accessible.
+    # If LOG_FILE was based on a timestamp, it's fixed from script start.
+    # If --output-dir changed it, it was updated during arg parsing.
+
     log_message "INFO" "--- Start of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
-    cat "$PYTHON_SCRIPT_LOG_FILE" >> "$LOG_FILE" # Append Python log to main log
-    cat "$PYTHON_SCRIPT_LOG_FILE" # Also print Python log to stdout for Colab visibility
+    # Append Python log to main log file
+    cat "$PYTHON_SCRIPT_LOG_FILE" >> "$LOG_FILE" 
+    # Also print Python log to stdout for Colab visibility
+    echo "---BEGIN PYTHON SCRIPT LOG OUTPUT---"
+    cat "$PYTHON_SCRIPT_LOG_FILE"
+    echo "---END PYTHON SCRIPT LOG OUTPUT---"
     log_message "INFO" "--- End of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
   else
     log_message "WARNING" "Python script detailed log file not found: $PYTHON_SCRIPT_LOG_FILE"

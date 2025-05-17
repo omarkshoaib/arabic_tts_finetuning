@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Inference script for generating speech using the fine-tuned OuteTTS model.
+Inference script for generating speech using the fine-tuned OuteTTS model (v1.0 / v3 interface).
 """
 
 import os
@@ -14,248 +14,321 @@ from typing import Optional
 from transformers import AutoTokenizer
 from peft import PeftModel
 from outetts.dac.interface import DacInterface
-from outetts.models.llama_tts import LlamaTTS
-from outetts.processor.text import OuteTTSTextProcessor
-from transformers.modeling_outputs import CausalLMOutputWithPast
+# from outetts.models.llama_tts import LlamaTTS # Old v0.3 import
+from outetts.version.v3.prompt_processor import PromptProcessor # v3 import
+from outetts.models.config import ModelConfig # For dummy config
+from unsloth import FastModel # Using Unsloth for consistency if fine-tuned with it
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class OuteTTSGenerator:
+class OuteTTSGeneratorV3:
     def __init__(
         self,
-        model_path: str,
+        model_path: str, # Path to LoRA adapter if use_lora is True, else full model path
         use_lora: bool = True,
         base_model_name: str = "OuteAI/Llama-OuteTTS-1.0-1B",
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        dac_ckpt: Optional[str] = None,
+        dac_ckpt: Optional[str] = None, # Usually not needed if OuteTTS handles it
+        max_seq_length: int = 2048, # Should match training
     ):
         """
-        Initialize the OuteTTS generator.
-        
-        Args:
-            model_path: Path to the fine-tuned model or LoRA adapter
-            use_lora: Whether the model_path points to a LoRA adapter
-            base_model_name: Name of the base model to use with LoRA
-            device: Device to run inference on ("cuda" or "cpu")
-            dac_ckpt: Path to DAC checkpoint (if not using the default one)
+        Initialize the OuteTTS v3 generator.
         """
         self.device = device
         self.use_lora = use_lora
         
-        logger.info(f"Initializing OuteTTS generator with model: {model_path}")
+        logger.info(f"Initializing OuteTTS v3 generator.")
+        logger.info(f"Using LoRA: {use_lora}")
+        logger.info(f"Model/Adapter path: {model_path}")
+        logger.info(f"Base model: {base_model_name}")
         logger.info(f"Device: {device}")
-        
-        # Load tokenizer
-        logger.info("Loading tokenizer...")
-        model_name = base_model_name if use_lora else model_path
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        
-        # Load base model
-        logger.info(f"Loading base model: {model_name}")
-        self.model = LlamaTTS.from_pretrained(
-            model_name,
-            torch_dtype=torch.float32,  # Must use fp32 for OuteTTS
-            device_map=self.device
+
+        # Load tokenizer (usually from the base model)
+        logger.info(f"Loading tokenizer from {base_model_name}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+
+        # Load base model using Unsloth FastModel
+        logger.info(f"Loading base model '{base_model_name}' with Unsloth...")
+        self.model, _ = FastModel.from_pretrained(
+            model_name=base_model_name,
+            max_seq_length=max_seq_length,
+            dtype=torch.float32,
+            load_in_4bit=False, # OuteTTS requires no 4-bit
+            device_map=self.device, # Map model to device
         )
         
         # Load LoRA adapter if necessary
         if use_lora:
-            logger.info(f"Loading LoRA adapter from: {model_path}")
-            self.model = PeftModel.from_pretrained(self.model, model_path)
-        
+            logger.info(f"Loading and merging LoRA adapter from: {model_path}")
+            try:
+                self.model = PeftModel.from_pretrained(self.model, model_path)
+                # If you want to merge LoRA weights for faster inference (optional, increases memory)
+                # self.model = self.model.merge_and_unload() 
+                logger.info("LoRA adapter loaded successfully.")
+            except Exception as e:
+                logger.error(f"Error loading LoRA adapter: {e}. Check if model_path is correct and contains adapter_model.bin/safetensors.")
+                raise
+        else:
+            # If not using LoRA, model_path should be a full fine-tuned model
+            # For now, we assume Unsloth's from_pretrained handled this if model_path = base_model_name
+            # If model_path is a different full model, this part might need adjustment or rely on HF from_pretrained
+            logger.info(f"Using model from {model_path} without LoRA.")
+
+
         # Initialize DAC
         logger.info("Initializing DAC interface...")
-        self.dac = DacInterface(
-            dac_ckpt=dac_ckpt,
-            device=self.device,
+        # Create a dummy ModelConfig for DacInterface if it needs one
+        dummy_config = ModelConfig(
+            audio_codec_path=dac_ckpt, # Path to DAC model if not default
+            device=self.device
         )
+        self.dac = DacInterface(config=dummy_config) # Pass config if DacInterface expects it
         
-        # Initialize text processor
-        logger.info("Initializing text processor...")
-        self.text_processor = OuteTTSTextProcessor()
+        # Initialize v3 PromptProcessor
+        logger.info("Initializing v3 PromptProcessor...")
+        self.prompt_processor = PromptProcessor(base_model_name) # Needs tokenizer path
         
     def generate_speech(
         self,
         text: str,
         output_file: str,
-        speaker_name: str = "gpt",
-        language: str = "ar",
+        speaker_name: str = "default_speaker", # Default speaker tag
+        lang: str = "ar", # Explicitly using "lang" as per v3
         top_p: float = 0.9,
         temperature: float = 0.7,
         repetition_penalty: float = 1.2,
-        max_new_tokens: int = 2048,
+        max_new_tokens: int = 2048, # Max tokens for the *entire* output (prompt + generation)
         sample_rate: int = 24000,
     ):
         """
-        Generate speech from text.
-        
-        Args:
-            text: Text to convert to speech
-            output_file: Path to save the generated audio
-            speaker_name: Name of the speaker
-            language: Language code (default: "ar" for Arabic)
-            top_p: Top-p sampling parameter
-            temperature: Temperature for sampling
-            repetition_penalty: Repetition penalty parameter
-            max_new_tokens: Maximum number of new tokens to generate
-            sample_rate: Sample rate of the output audio
+        Generate speech from text using OuteTTS v3 interface.
         """
-        # Process text
-        logger.info(f"Processing text: {text[:50]}...")
-        processed_text = self.text_processor.process(text, language=language)
+        # Create inference prompt using PromptProcessor
+        # The v3 prompt processor typically takes a dictionary or specific args.
+        # For simple text-to-speech, it needs the text, speaker, and lang.
+        # It handles normalization and formatting.
         
-        # Create prompt
-        prompt = f"<|lang:{language}|>[{speaker_name}]:{processed_text}<|startmedia|><|dac|>"
-        logger.info(f"Created prompt: {prompt[:100]}...")
+        # We need to construct the text part of the prompt that the model expects to complete.
+        # This usually involves language, speaker, and the input text, followed by generation start tokens.
+        # The PromptProcessor.get_inference_prompt might be what we need, or construct manually.
+        # Example: prompt_dict = {"text": text, "speaker_name": speaker_name, "lang": lang}
+        # inference_prompt_details = self.prompt_processor.get_inference_prompt(prompt_dict)
+        # prompt_text_part = inference_prompt_details["prompt_text_part"] 
+        # Or more directly:
+        prompt_text_part = f"<|lang:{lang}|>[{speaker_name}]:{text}<|startmedia|><|dac|>"
         
-        # Tokenize
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        logger.info(f"Processed text for prompt: {prompt_text_part[:150]}...")
         
-        # Generate
-        logger.info("Generating speech...")
+        inputs = self.tokenizer(prompt_text_part, return_tensors="pt").to(self.device)
+        input_ids_length = inputs.input_ids.shape[1]
+
+        logger.info("Generating DAC codes...")
         with torch.no_grad():
-            outputs: CausalLMOutputWithPast = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
+            # Generate, ensuring pad_token_id is eos_token_id if not set, or tokenizer.pad_token_id
+            # OuteTTS models often use eos_token_id for padding during generation.
+            pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.pad_token_id is None else self.tokenizer.pad_token_id
+            
+            outputs = self.model.generate(
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                max_new_tokens=max_new_tokens, # Max tokens for the DAC codes part
                 do_sample=True,
                 top_p=top_p,
                 temperature=temperature,
                 repetition_penalty=repetition_penalty,
-                use_cache=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                return_dict_in_generate=True,
-                output_scores=True,
+                pad_token_id=pad_token_id, # Important for generation
+                eos_token_id=self.tokenizer.eos_token_id, # Ensure generation stops
             )
         
-        # Get the predicted DAC codes
-        predicted_ids = outputs.sequences[0].tolist()
-        input_length = inputs.input_ids.shape[1]
-        dac_code_string = self.tokenizer.decode(predicted_ids[input_length:])
+        # Extract only the generated tokens (DAC codes)
+        generated_token_ids = outputs[0][input_ids_length:]
         
-        # Extract DAC codes
-        logger.info("Extracting DAC codes...")
+        # Decode the generated tokens to get the DAC code string
+        # This part needs to be robust to how OuteTTS v3 formats DAC codes
+        # It might output special tokens that need to be handled or stripped.
+        
+        raw_dac_code_string = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+        logger.info(f"Raw generated DAC string (first 100 chars): {raw_dac_code_string[:100]}")
+
+        # Extract DAC codes (this method might need adjustment for v3)
+        # The v3 interface might provide a more direct way or different format.
+        # We need to ensure we're only feeding valid integer codes to dac.decode()
         try:
-            dac_codes = self.extract_dac_codes(dac_code_string)
+            # Attempt to extract codes from the string.
+            # The string might look like "<|dac|> 123 45 67 <|endoftext|>"
+            # Or "<|dac|>123,45,67<|endoftext|>"
+            # We need to get the numbers between <|dac|> (or generation start) and <|endoftext|> or other terminators.
             
-            # Convert DAC codes to audio
-            logger.info("Converting DAC codes to audio...")
-            audio = self.dac.decode(dac_codes)
+            # A more robust way for v3 might be to use the prompt_processor if it has a method for this,
+            # or to carefully parse based on the known structure of generated DAC tokens.
+            # For now, let's try a refined version of the original extraction.
+
+            # Find the start of DAC codes (after the initial prompt part that includes <|dac|>)
+            # and end (before <|endoftext|> or other stop tokens).
             
-            # Save audio
-            logger.info(f"Saving audio to {output_file}...")
+            dac_codes_cleaned = []
+            # Assuming DAC tokens are represented as individual tokens by the tokenizer,
+            # not necessarily a comma/space separated string of digits after decoding.
+            # The model generates TOKEN IDs. The tokenizer.decode turns them into strings.
+            # If DAC codes are special tokens (e.g., <DAC_001>, <DAC_002>), we need to map them back to integers.
+            # If they are just numbers as strings, then parsing is needed.
+            # OuteTTS v1.0 and DAC typically use a vocabulary of DAC tokens (e.g., 0-1023 for Encodec).
+            # The model should generate these token IDs directly.
+            
+            # Let's assume the generated_token_ids ARE the DAC code IDs.
+            # We need to check if they are within the DAC's expected range.
+            # The prompt_processor or dac interface should clarify the expected format.
+
+            # Placeholder: This is a critical part that needs to align with OuteTTS v3's DAC tokenization.
+            # If generated_token_ids are directly usable (e.g. integers from 0-1023 for Encodec)
+            # and DacInterface.decode expects a flat list/tensor of these integers.
+            
+            # Let's assume `generated_token_ids` contains the sequence of DAC code indices.
+            # We need to filter out any EOS or PAD tokens that might have been generated if max_new_tokens was reached.
+            
+            valid_dac_token_ids = []
+            for token_id in generated_token_ids.tolist():
+                if token_id == self.tokenizer.eos_token_id or token_id == self.tokenizer.pad_token_id:
+                    break # Stop if we hit EOS/PAD
+                # Check if token_id is a valid DAC code index.
+                # This depends on the specific DAC used by OuteTTS v1.0.
+                # For now, let's assume all generated non-EOS/PAD tokens are DAC indices.
+                # A more robust check would be `0 <= token_id < dac_vocab_size`.
+                valid_dac_token_ids.append(token_id)
+
+            if not valid_dac_token_ids:
+                logger.error("No valid DAC token IDs were generated.")
+                return False
+
+            # The DacInterface.decode expects a specific shape, usually (1, num_quantizers, sequence_length) or similar.
+            # Or a flat list if it handles reshaping. This is a MAJOR assumption here.
+            # OuteTTS often uses multiple quantizers. The generated sequence might be interleaved or stacked.
+            # The `AudioProcessor` in v3 or `DacInterface` should provide clues.
+            # For Encodec, it's typically a (num_quantizers, sequence_length) tensor.
+            # If the model generates a flat sequence, we might need to reshape it.
+            # Let's assume for now `self.dac.decode` can handle a flat list of codebook indices
+            # and knows the number of quantizers. This is a simplification.
+
+            logger.info(f"Number of raw DAC token IDs generated: {len(valid_dac_token_ids)}")
+            
+            # Reshape if necessary. Example: if 8 quantizers, codes should be [N, 8] or [8, N]
+            # This part is highly dependent on the specific DAC architecture and how OuteTTS v1.0 structures its output.
+            # The `AudioProcessor`'s `decode_audio_codes` or similar method in OuteTTS source would be the definitive reference.
+            # For now, we pass the flat list. This MIGHT FAIL OR PRODUCE NOISE if reshape is needed.
+            dac_codes_tensor = torch.tensor([valid_dac_token_ids], dtype=torch.long, device=self.device)
+            # The shape might need to be (1, num_quantizers, T) or (num_quantizers, T)
+            # Example: if dac has 4 quantizers: dac_codes_tensor = dac_codes_tensor.view(1, 4, -1)
+
+            # Assuming dac.decode can handle a 2D tensor [1, sequence_length] of DAC indices for now.
+            # This is the most likely point of failure if the DAC part is not correctly interfaced.
+            
+            audio_waveform = self.dac.decode(dac_codes_tensor) # Expects tensor of indices
+            
+            if audio_waveform is None or audio_waveform.ndim == 0 or audio_waveform.shape[-1] == 0:
+                logger.error("DAC decoding resulted in empty or invalid audio.")
+                return False
+
+            # Ensure audio is 1D numpy array for soundfile
+            audio_numpy = audio_waveform.squeeze().cpu().numpy()
+            if audio_numpy.ndim > 1: # If still 2D (e.g. [1, L]), squeeze further if L=1, or take first channel.
+                 audio_numpy = audio_numpy.squeeze()
+                 if audio_numpy.ndim > 1 and audio_numpy.shape[0] == 1 : # handles case like [1,L]
+                    audio_numpy = audio_numpy[0]
+                 elif audio_numpy.ndim > 1 :
+                    logger.warning(f"Decoded audio is multi-channel ({audio_numpy.shape}), taking first channel.")
+                    audio_numpy = audio_numpy[0]
+
+
+            logger.info(f"Saving audio to {output_file} (Sample Rate: {sample_rate})...")
             os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-            sf.write(output_file, audio, sample_rate)
-            logger.info("Done!")
+            sf.write(output_file, audio_numpy, sample_rate) # DAC output SR might differ, use dac.sample_rate
+            logger.info("Speech generation complete!")
             return True
+            
         except Exception as e:
-            logger.error(f"Error generating speech: {e}")
+            logger.error(f"Error during DAC code extraction or audio generation: {e}", exc_info=True)
             return False
-    
-    def extract_dac_codes(self, dac_code_string: str):
-        """
-        Extract DAC codes from the generated string.
-        
-        Args:
-            dac_code_string: String containing DAC codes
-            
-        Returns:
-            numpy.ndarray: Array of DAC codes
-        """
-        # Remove any text before the first digit
-        clean_text = ""
-        started = False
-        
-        for char in dac_code_string:
-            if char.isdigit() or char == "-" or char == ",":
-                started = True
-            
-            if started:
-                clean_text += char
-        
-        # Split by commas and convert to integers
-        try:
-            # First try comma-separated format
-            codes = np.array([int(code.strip()) for code in clean_text.split(",") if code.strip()])
-        except ValueError:
-            # If that fails, try space-separated format
-            codes = np.array([int(code.strip()) for code in clean_text.split() if code.strip()])
-        
-        return codes
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(description="Generate speech using fine-tuned OuteTTS")
+    parser = argparse.ArgumentParser(description="Generate speech using fine-tuned OuteTTS (v3 interface)")
     parser.add_argument("--config", type=str, help="Path to the config YAML file")
-    parser.add_argument("--model_path", type=str, help="Path to the fine-tuned model or LoRA adapter")
+    parser.add_argument("--model_path", type=str, help="Path to the fine-tuned LoRA adapter (or full model if --no_lora)")
     parser.add_argument("--text", type=str, help="Text to convert to speech")
     parser.add_argument("--output_file", type=str, help="Path to save the generated audio")
-    parser.add_argument("--use_lora", action="store_true", help="Whether the model_path points to a LoRA adapter")
-    parser.add_argument("--base_model", type=str, default="OuteAI/Llama-OuteTTS-1.0-1B", help="Base model for LoRA")
-    parser.add_argument("--speaker", type=str, default="gpt", help="Speaker name")
-    parser.add_argument("--language", type=str, default="ar", help="Language code")
+    parser.add_argument("--no_lora", action="store_true", help="Set if model_path is a full model, not a LoRA adapter")
+    parser.add_argument("--base_model", type=str, default="OuteAI/Llama-OuteTTS-1.0-1B", help="Base model name")
+    parser.add_argument("--speaker", type=str, default="default_speaker", help="Speaker name/tag used during training")
+    parser.add_argument("--lang", type=str, default="ar", help="Language code (e.g., ar, en)")
+    parser.add_argument("--max_seq_len", type=int, default=2048, help="Max sequence length for model loading")
     
     args = parser.parse_args()
     
     # Load config from file if provided, otherwise use command-line args
     if args.config:
+        logger.info(f"Loading configuration from: {args.config}")
         with open(args.config, "r") as f:
             config = yaml.safe_load(f)
         
-        # Override config with command-line args if provided
-        if args.model_path:
-            config["model_path"] = args.model_path
-        if args.text:
-            config["text"] = args.text
-        if args.output_file:
-            config["output_file"] = args.output_file
-        if args.use_lora:
-            config["use_lora"] = args.use_lora
-        if args.base_model:
-            config["base_model"] = args.base_model
-        if args.speaker:
-            config["speaker"] = args.speaker
-        if args.language:
-            config["language"] = args.language
+        # Override with command-line args if provided
+        config["model_path"] = args.model_path if args.model_path else config.get("model_path")
+        config["text"] = args.text if args.text else config.get("text")
+        config["output_file"] = args.output_file if args.output_file else config.get("output_file")
+        config["use_lora"] = not args.no_lora if args.no_lora is not None else config.get("use_lora", True) # Handle store_true
+        config["base_model"] = args.base_model if args.base_model else config.get("base_model", "OuteAI/Llama-OuteTTS-1.0-1B")
+        config["speaker"] = args.speaker if args.speaker else config.get("speaker", "default_speaker")
+        config["lang"] = args.lang if args.lang else config.get("lang", "ar")
+        config["max_seq_length"] = args.max_seq_len if args.max_seq_len else config.get("max_seq_length", 2048)
+
     else:
         if not args.model_path or not args.text or not args.output_file:
-            parser.error("Either --config or all of --model_path, --text, and --output_file must be provided")
+            parser.error("If --config is not used, then --model_path, --text, and --output_file must be provided.")
         
         config = {
             "model_path": args.model_path,
             "text": args.text,
             "output_file": args.output_file,
-            "use_lora": args.use_lora,
+            "use_lora": not args.no_lora,
             "base_model": args.base_model,
             "speaker": args.speaker,
-            "language": args.language,
-            # Default values
+            "lang": args.lang,
+            "max_seq_length": args.max_seq_len,
+            # Default generation values
             "top_p": 0.9,
             "temperature": 0.7,
             "repetition_penalty": 1.2,
-            "max_new_tokens": 2048,
-            "sample_rate": 24000,
+            "max_new_tokens": 1024, # Adjusted for DAC tokens, was 2048
+            "sample_rate": 24000, # This should ideally come from DAC's sample_rate
         }
     
+    logger.info(f"Effective configuration: {config}")
+
     # Initialize generator
-    generator = OuteTTSGenerator(
+    generator = OuteTTSGeneratorV3(
         model_path=config["model_path"],
         use_lora=config.get("use_lora", True),
         base_model_name=config.get("base_model", "OuteAI/Llama-OuteTTS-1.0-1B"),
+        max_seq_length=config.get("max_seq_length", 2048)
     )
     
     # Generate speech
-    generator.generate_speech(
+    success = generator.generate_speech(
         text=config["text"],
         output_file=config["output_file"],
-        speaker_name=config.get("speaker", "gpt"),
-        language=config.get("language", "ar"),
+        speaker_name=config.get("speaker", "default_speaker"),
+        lang=config.get("lang", "ar"),
         top_p=config.get("top_p", 0.9),
         temperature=config.get("temperature", 0.7),
         repetition_penalty=config.get("repetition_penalty", 1.2),
-        max_new_tokens=config.get("max_new_tokens", 2048),
-        sample_rate=config.get("sample_rate", 24000),
+        max_new_tokens=config.get("max_new_tokens", 1024), # Max DAC tokens
+        sample_rate=config.get("sample_rate", 24000) # ideally dac.sample_rate
     )
+
+    if success:
+        logger.info(f"Speech generated successfully: {config['output_file']}")
+    else:
+        logger.error("Speech generation failed.")
 
 if __name__ == "__main__":
     main() 

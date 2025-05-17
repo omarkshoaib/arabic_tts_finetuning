@@ -89,11 +89,11 @@ class OuteTTSGeneratorV3:
         
         try:
             self.dac_n_codebooks = self.dac.model.quantizer.n_codebooks
-            self.dac_codebook_bins = self.dac.model.quantizer.bins
-            logger.info(f"DAC model initialized with n_codebooks: {self.dac_n_codebooks} and bins (codebook size per quantizer): {self.dac_codebook_bins}")
+            self.dac_codebook_bins = self.dac.model.quantizer.codebook_size
+            logger.info(f"DAC model initialized with n_codebooks: {self.dac_n_codebooks} and codebook_size (bins per quantizer): {self.dac_codebook_bins}")
         except AttributeError as e:
-            logger.error(f"Failed to retrieve n_codebooks or bins from DAC model's quantizer: {e}")
-            logger.error("self.dac.model.quantizer or its attributes .n_codebooks/.bins might be missing.")
+            logger.error(f"Failed to retrieve n_codebooks or codebook_size from DAC model's quantizer: {e}")
+            logger.error("self.dac.model.quantizer or its attributes .n_codebooks/.codebook_size might be missing.")
             logger.error("This is critical for DAC token processing. Please check DAC model compatibility and initialization.")
             # Attempt to inspect the quantizer object if it exists
             if hasattr(self.dac, 'model') and hasattr(self.dac.model, 'quantizer'):
@@ -101,7 +101,7 @@ class OuteTTSGeneratorV3:
                 logger.error(f"DAC quantizer attributes: {dir(self.dac.model.quantizer)}")
             else:
                 logger.error("self.dac.model or self.dac.model.quantizer is not available for inspection.")
-            raise ValueError("Critical DAC model attributes (n_codebooks, bins) could not be determined.") from e
+            raise ValueError("Critical DAC model attributes (n_codebooks, codebook_size) could not be determined.") from e
 
         # Initialize v3 PromptProcessor
         logger.info("Initializing v3 PromptProcessor...")

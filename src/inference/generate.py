@@ -87,6 +87,22 @@ class OuteTTSGeneratorV3:
         # not a config object.
         self.dac = DacInterface(device=self.device, model_path=dac_ckpt)
         
+        try:
+            self.dac_n_codebooks = self.dac.model.quantizer.n_codebooks
+            self.dac_codebook_bins = self.dac.model.quantizer.bins
+            logger.info(f"DAC model initialized with n_codebooks: {self.dac_n_codebooks} and bins (codebook size per quantizer): {self.dac_codebook_bins}")
+        except AttributeError as e:
+            logger.error(f"Failed to retrieve n_codebooks or bins from DAC model's quantizer: {e}")
+            logger.error("self.dac.model.quantizer or its attributes .n_codebooks/.bins might be missing.")
+            logger.error("This is critical for DAC token processing. Please check DAC model compatibility and initialization.")
+            # Attempt to inspect the quantizer object if it exists
+            if hasattr(self.dac, 'model') and hasattr(self.dac.model, 'quantizer'):
+                logger.error(f"DAC quantizer object: {self.dac.model.quantizer}")
+                logger.error(f"DAC quantizer attributes: {dir(self.dac.model.quantizer)}")
+            else:
+                logger.error("self.dac.model or self.dac.model.quantizer is not available for inspection.")
+            raise ValueError("Critical DAC model attributes (n_codebooks, bins) could not be determined.") from e
+
         # Initialize v3 PromptProcessor
         logger.info("Initializing v3 PromptProcessor...")
         self.prompt_processor = PromptProcessor(base_model_name) # Needs tokenizer path
@@ -143,149 +159,78 @@ class OuteTTSGeneratorV3:
                 eos_token_id=self.tokenizer.eos_token_id, # Ensure generation stops
             )
         
-        # Extract only the generated tokens (DAC codes)
-        generated_token_ids = outputs[0][input_ids_length:]
-        
-        # Decode the generated tokens to get the DAC code string
-        # This part needs to be robust to how OuteTTS v3 formats DAC codes
-        # It might output special tokens that need to be handled or stripped.
-        
-        raw_dac_code_string = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
-        logger.info(f"Raw generated DAC string (first 100 chars): {raw_dac_code_string[:100]}")
+        # Extract generated token IDs, excluding the input prompt
+        # generated_token_ids will be a list of integers.
+        generated_token_ids = outputs[0, input_ids_length:].tolist()
+        logger.info(f"Raw generated token IDs (after prompt): {len(generated_token_ids)}")
 
-        # Extract DAC codes (this method might need adjustment for v3)
-        # The v3 interface might provide a more direct way or different format.
-        # We need to ensure we're only feeding valid integer codes to dac.decode()
-        try:
-            # Attempt to extract codes from the string.
-            # The string might look like "<|dac|> 123 45 67 <|endoftext|>"
-            # Or "<|dac|>123,45,67<|endoftext|>"
-            # We need to get the numbers between <|dac|> (or generation start) and <|endoftext|> or other terminators.
-            
-            # A more robust way for v3 might be to use the prompt_processor if it has a method for this,
-            # or to carefully parse based on the known structure of generated DAC tokens.
-            # For now, let's try a refined version of the original extraction.
+        # Decode DAC tokens using PromptProcessorV3. This handles the vocabulary shift
+        # and filters for valid DAC token range based on its internal audio_processor config.
+        # The result (decoded_dac_codes) should be 0-indexed DAC codes.
+        decoded_dac_codes = self.prompt_processor.decode_dac_tokens(generated_token_ids)
+        logger.info(f"Number of decoded DAC codes (0-indexed) from prompt_processor: {len(decoded_dac_codes)}")
 
-            # Find the start of DAC codes (after the initial prompt part that includes <|dac|>)
-            # and end (before <|endoftext|> or other stop tokens).
-            
-            dac_codes_cleaned = []
-            # Assuming DAC tokens are represented as individual tokens by the tokenizer,
-            # not necessarily a comma/space separated string of digits after decoding.
-            # The model generates TOKEN IDs. The tokenizer.decode turns them into strings.
-            # If DAC codes are special tokens (e.g., <DAC_001>, <DAC_002>), we need to map them back to integers.
-            # If they are just numbers as strings, then parsing is needed.
-            # OuteTTS v1.0 and DAC typically use a vocabulary of DAC tokens (e.g., 0-1023 for Encodec).
-            # The model should generate these token IDs directly.
-            
-            # Let's assume `generated_token_ids` contains the sequence of DAC code indices.
-            # We need to filter out any EOS or PAD tokens that might have been generated if max_new_tokens was reached,
-            # and also ensure the token IDs are within the valid range for the DAC codebook.
-            
-            valid_dac_token_ids = []
-            dac_codebook_size = -1
-            try:
-                dac_codebook_size = self.dac.model.quantizer.bins
-                logger.info(f"DAC model codebook size (bins): {dac_codebook_size}")
-            except AttributeError:
-                logger.error("Could not determine dac_codebook_size from self.dac.model.quantizer.bins. This is critical for filtering.")
-                # Default for Encodec/DAC is often 1024. This is a risky fallback.
-                logger.warning("Attempting to use a default dac_codebook_size=1024 due to AttributeError. This might be incorrect.")
-                dac_codebook_size = 1024
-
-            if dac_codebook_size <= 0:
-                logger.error(f"Invalid DAC codebook size: {dac_codebook_size}. Cannot filter tokens.")
-                return False
-
-            for token_id_val in generated_token_ids.tolist():
-                token_id = int(token_id_val) # Ensure it's an int for comparison
-                if token_id == self.tokenizer.eos_token_id or token_id == self.tokenizer.pad_token_id:
-                    logger.info(f"Encountered EOS/PAD token ({token_id}), stopping token collection.")
-                    break # Stop if we hit EOS/PAD
-                
-                # Check if token_id is a valid DAC code index for its codebook
-                if not (0 <= token_id < dac_codebook_size):
-                    logger.warning(
-                        f"Generated token ID {token_id} is out of DAC codebook range (0 to {dac_codebook_size-1}). Skipping token."
-                    )
-                    continue # Skip this invalid token
-                
-                valid_dac_token_ids.append(token_id)
-
-            if not valid_dac_token_ids:
-                logger.error("No valid DAC token IDs were generated after filtering.")
-                return False
-
-            logger.info(f"Number of filtered DAC token IDs: {len(valid_dac_token_ids)}")
-            
-            try:
-                # Determine the number of codebooks from the loaded DAC model
-                n_codebooks = self.dac.model.quantizer.n_codebooks
-                logger.info(f"DAC model uses {n_codebooks} codebooks (quantizers).")
-            except AttributeError:
-                logger.error("Could not determine n_codebooks from self.dac.model.quantizer.n_codebooks. This is critical for reshaping.")
-                # As a fallback, for the specific 'ibm-research/DAC.speech.v1.0' (24khz_1.5kbps), n_codebooks is 9.
-                # This is risky if the model changes. Ideally, this should always be found.
-                # Consider making this a parameter or ensuring the dac model object always has this.
-                logger.warning("Attempting to use a default n_codebooks=9 due to AttributeError. This might be incorrect.")
-                n_codebooks = 9 
-
-            if n_codebooks <= 0:
-                logger.error(f"Invalid n_codebooks found or defaulted: {n_codebooks}. Must be positive.")
-                return False
-
-            if len(valid_dac_token_ids) == 0:
-                 logger.error("No valid DAC tokens available before reshaping.")
-                 return False
-
-            # Ensure the number of tokens is divisible by the number of codebooks
-            if len(valid_dac_token_ids) % n_codebooks != 0:
-                num_tokens_to_trim = len(valid_dac_token_ids) % n_codebooks
-                logger.warning(
-                    f"Number of DAC tokens ({len(valid_dac_token_ids)}) is not divisible by "
-                    f"n_codebooks ({n_codebooks}). Trimming {num_tokens_to_trim} tokens from the end."
-                )
-                valid_dac_token_ids = valid_dac_token_ids[:-num_tokens_to_trim]
-            
-            if not valid_dac_token_ids: # Check if trimming made it empty
-                 logger.error("No valid DAC tokens left after attempting to make them divisible by n_codebooks.")
-                 return False
-
-            # Reshape to (batch_size, n_codebooks, sequence_length_per_codebook)
-            # Batch size is 1 for our inference case.
-            dac_codes_tensor = torch.tensor(valid_dac_token_ids, dtype=torch.long, device=self.device)
-            dac_codes_tensor = dac_codes_tensor.view(1, n_codebooks, -1) 
-            logger.info(f"Reshaped DAC codes tensor to: {dac_codes_tensor.shape}")
-            
-            # Assuming dac.decode can handle a 2D tensor [1, sequence_length] of DAC indices for now.
-            # This is the most likely point of failure if the DAC part is not correctly interfaced.
-            
-            audio_waveform = self.dac.decode(dac_codes_tensor) # Expects tensor of indices
-            
-            if audio_waveform is None or audio_waveform.ndim == 0 or audio_waveform.shape[-1] == 0:
-                logger.error("DAC decoding resulted in empty or invalid audio.")
-                return False
-
-            # Ensure audio is 1D numpy array for soundfile
-            audio_numpy = audio_waveform.squeeze().cpu().numpy()
-            if audio_numpy.ndim > 1: # If still 2D (e.g. [1, L]), squeeze further if L=1, or take first channel.
-                 audio_numpy = audio_numpy.squeeze()
-                 if audio_numpy.ndim > 1 and audio_numpy.shape[0] == 1 : # handles case like [1,L]
-                    audio_numpy = audio_numpy[0]
-                 elif audio_numpy.ndim > 1 :
-                    logger.warning(f"Decoded audio is multi-channel ({audio_numpy.shape}), taking first channel.")
-                    audio_numpy = audio_numpy[0]
-
-
-            logger.info(f"Saving audio to {output_file} (Sample Rate: {sample_rate})...")
-            os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-            sf.write(output_file, audio_numpy, sample_rate) # DAC output SR might differ, use dac.sample_rate
-            logger.info("Speech generation complete!")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error during DAC code extraction or audio generation: {e}", exc_info=True)
+        if not decoded_dac_codes:
+            logger.error("No valid DAC codes were decoded by the prompt_processor.")
             return False
+
+        # Use n_codebooks retrieved during __init__
+        n_codebooks = self.dac_n_codebooks
+        if n_codebooks <= 0:
+            logger.error(f"Invalid n_codebooks ({n_codebooks}) obtained during initialization. Cannot proceed.")
+            return False
+
+        num_tokens = len(decoded_dac_codes)
+        if num_tokens % n_codebooks != 0:
+            remainder = num_tokens % n_codebooks
+            logger.warning(
+                f"Number of decoded DAC codes ({num_tokens}) is not divisible by n_codebooks ({n_codebooks}). "
+                f"Remainder is {remainder}. Trimming {remainder} tokens from the end."
+            )
+            decoded_dac_codes = decoded_dac_codes[:num_tokens - remainder]
+            num_tokens = len(decoded_dac_codes) # Update num_tokens after trimming
+            logger.info(f"Number of DAC codes after trimming: {num_tokens}")
+
+        if not decoded_dac_codes or num_tokens < n_codebooks:
+            logger.error("Not enough DAC codes to form at least one complete set for all codebooks after (optional) trimming.")
+            return False
+
+        # Convert to tensor and reshape for DAC decoding
+        try:
+            codes_tensor = torch.LongTensor(decoded_dac_codes).to(self.device)
+            # Reshape to [Batch=1, N_Codebooks, Time_per_codebook]
+            codes_for_dac = codes_tensor.reshape(1, n_codebooks, -1)
+            logger.info(f"Reshaped codes for DAC: {codes_for_dac.shape}")
+        except Exception as e:
+            logger.error(f"Error during tensor conversion or reshaping of DAC codes: {e}")
+            logger.error(f"Decoded DAC codes (at error point, len={len(decoded_dac_codes)}): {decoded_dac_codes[:20]}...") # Log first 20
+            logger.error(f"n_codebooks: {n_codebooks}")
+            return False
+
+        # Decode using DAC
+        logger.info("Decoding DAC codes to audio...")
+        audio_waveform = self.dac.decode(codes_for_dac) # Expects tensor of indices
+        
+        if audio_waveform is None or audio_waveform.ndim == 0 or audio_waveform.shape[-1] == 0:
+            logger.error("DAC decoding resulted in empty or invalid audio.")
+            return False
+
+        # Ensure audio is 1D numpy array for soundfile
+        audio_numpy = audio_waveform.squeeze().cpu().numpy()
+        if audio_numpy.ndim > 1: # If still 2D (e.g. [1, L]), squeeze further if L=1, or take first channel.
+            audio_numpy = audio_numpy.squeeze()
+            if audio_numpy.ndim > 1 and audio_numpy.shape[0] == 1 : # handles case like [1,L]
+                audio_numpy = audio_numpy[0]
+            elif audio_numpy.ndim > 1 :
+                logger.warning(f"Decoded audio is multi-channel ({audio_numpy.shape}), taking first channel.")
+                audio_numpy = audio_numpy[0]
+
+
+        logger.info(f"Saving audio to {output_file} (Sample Rate: {sample_rate})...")
+        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+        sf.write(output_file, audio_numpy, sample_rate) # DAC output SR might differ, use dac.sample_rate
+        logger.info("Speech generation complete!")
+        return True
 
 def main():
     """Main function"""

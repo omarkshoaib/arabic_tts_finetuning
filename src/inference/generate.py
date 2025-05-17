@@ -23,9 +23,15 @@ from outetts.dac.interface import DacInterface
 # from outetts.models.llama_tts import LlamaTTS # Old v0.3 import
 from outetts.version.v3.prompt_processor import PromptProcessor # v3 import
 from outetts.models.config import ModelConfig # For dummy config
+import sys # Ensure sys is imported for stderr
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Setup basic logging
+# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(name)s:%(lineno)d | %(message)s')
+# logger = logging.getLogger(__name__)
+
+# More direct logging for critical path debugging
+def print_debug(message):
+    print(f"DEBUG_GENERATE_PY: {message}", file=sys.stderr)
 
 class OuteTTSGeneratorV3:
     def __init__(
@@ -46,40 +52,40 @@ class OuteTTSGeneratorV3:
         self.model_path = model_path
         self.base_model_name = base_model_name
 
-        logger.info(f"Initializing OuteTTSGeneratorV3. Device: {self.device}, LoRA: {self.use_lora}")
-        logger.info(f"Model path: {self.model_path}, Base model: {self.base_model_name}")
+        print_debug(f"Initializing OuteTTSGeneratorV3. Device: {self.device}, LoRA: {self.use_lora}")
+        print_debug(f"Model path: {self.model_path}, Base model: {self.base_model_name}, Max Seq Len: {self.max_seq_length}")
 
         if self.use_lora:
-            logger.info(f"Loading base model '{self.base_model_name}' with LoRA adapter from '{self.model_path}'")
+            print_debug(f"Loading base model '{self.base_model_name}' with LoRA adapter from '{self.model_path}'")
             self.model, self.tokenizer = FastModel.from_pretrained(
                 model_name=self.base_model_name,
                 max_seq_length=self.max_seq_length,
                 dtype=None, # Let Unsloth choose optimal dtype for base
                 load_in_4bit=False, # Base model is not 4-bit when using LoRA
             )
-            logger.info(f"Base model loaded with dtype: {self.model.dtype}")
+            print_debug(f"Base model loaded. Dtype: {self.model.dtype if hasattr(self.model, 'dtype') else 'N/A'}. Tokenizer: {type(self.tokenizer)}")
             self.model = FastModel.get_peft_model(
                 self.model,
                 self.model_path,
                 # r = 16, # default
                 # lora_alpha = 16, # default
             )
-            logger.info("LoRA adapter loaded and merged.")
+            print_debug("LoRA adapter loaded and merged.")
         else:
-            logger.info(f"Loading full model from '{self.base_model_name}' (no LoRA - model_path '{self.model_path}' is ignored for base model loading)")
+            print_debug(f"Loading full model from '{self.base_model_name}' (no LoRA - model_path '{self.model_path}' is ignored for base model loading)")
             self.model, self.tokenizer = FastModel.from_pretrained(
                 model_name=self.base_model_name, # Should be base_model_name
                 max_seq_length=self.max_seq_length,
                 dtype=None, # Let Unsloth choose optimal dtype
                 load_in_4bit=False, # Assuming base model inference is not 4-bit
             )
-            logger.info(f"Full model loaded with dtype: {self.model.dtype}")
+            print_debug(f"Full model loaded. Dtype: {self.model.dtype if hasattr(self.model, 'dtype') else 'N/A'}. Tokenizer: {type(self.tokenizer)}")
 
         self.model.to(self.device)
-        logger.info(f"Model moved to device: {self.device}")
+        print_debug(f"Model moved to device: {self.device}")
         
         # Initialize DAC
-        logger.info("Initializing DAC interface...")
+        print_debug("Initializing DAC interface...")
         # The DacInterface expects device and optionally model_path (dac_ckpt),
         # not a config object.
         self.dac = DacInterface(device=self.device, model_path=dac_ckpt)
@@ -87,21 +93,21 @@ class OuteTTSGeneratorV3:
         try:
             self.dac_n_codebooks = self.dac.model.quantizer.n_codebooks
             self.dac_codebook_bins = self.dac.model.quantizer.codebook_size
-            logger.info(f"DAC model initialized with n_codebooks: {self.dac_n_codebooks} and codebook_size (bins per quantizer): {self.dac_codebook_bins}")
+            print_debug(f"DAC model initialized with n_codebooks: {self.dac_n_codebooks} and codebook_size (bins per quantizer): {self.dac_codebook_bins}")
         except AttributeError as e:
-            logger.error(f"Failed to retrieve n_codebooks or codebook_size from DAC model's quantizer: {e}")
-            logger.error("self.dac.model.quantizer or its attributes .n_codebooks/.codebook_size might be missing.")
-            logger.error("This is critical for DAC token processing. Please check DAC model compatibility and initialization.")
+            print_debug(f"Failed to retrieve n_codebooks or codebook_size from DAC model's quantizer: {e}")
+            print_debug("self.dac.model.quantizer or its attributes .n_codebooks/.codebook_size might be missing.")
+            print_debug("This is critical for DAC token processing. Please check DAC model compatibility and initialization.")
             # Attempt to inspect the quantizer object if it exists
             if hasattr(self.dac, 'model') and hasattr(self.dac.model, 'quantizer'):
-                logger.error(f"DAC quantizer object: {self.dac.model.quantizer}")
-                logger.error(f"DAC quantizer attributes: {dir(self.dac.model.quantizer)}")
+                print_debug(f"DAC quantizer object: {self.dac.model.quantizer}")
+                print_debug(f"DAC quantizer attributes: {dir(self.dac.model.quantizer)}")
             else:
-                logger.error("self.dac.model or self.dac.model.quantizer is not available for inspection.")
+                print_debug("self.dac.model or self.dac.model.quantizer is not available for inspection.")
             raise ValueError("Critical DAC model attributes (n_codebooks, codebook_size) could not be determined.") from e
 
         # Initialize v3 PromptProcessor
-        logger.info("Initializing v3 PromptProcessor...")
+        print_debug("Initializing v3 PromptProcessor...")
         self.prompt_processor = PromptProcessor(base_model_name) # Needs tokenizer path
         
     def generate_speech(
@@ -122,13 +128,14 @@ class OuteTTSGeneratorV3:
         Generate speech from text using OuteTTS v1.0 model.
         Prompt structure and generation parameters are based on Oute_TTS_(1B).ipynb.
         """
+        print_debug(f"--- generate_speech called for output: {output_file} ---")
         # Clean and normalize input text
         text = text.strip()
         if not text:
-            logger.error("Input text is empty after cleaning")
+            print_debug("ERROR: Input text is empty after cleaning")
             return False
             
-        logger.info(f"Processing input text: '{text}'")
+        print_debug(f"Processing input text: '{text}'")
         
         # Build prompt based on Oute_TTS_(1B).ipynb
         # The notebook prompt ends after <|global_features_start|>
@@ -141,22 +148,22 @@ class OuteTTSGeneratorV3:
             # Removed: global_feature_tokens, "<|global_features_end|>", "<|word_start|>"
         ])
         
-        logger.info(f"Constructed prompt (first 150 chars): {prompt_text_part[:150]}...")
-        logger.debug(f"Full prompt being tokenized:\n{prompt_text_part}")
+        print_debug(f"Constructed prompt (first 150 chars): {prompt_text_part[:150]}...")
+        print_debug(f"Full prompt being tokenized:\n{prompt_text_part}")
         
         inputs = self.tokenizer(prompt_text_part, return_tensors="pt").to(self.device)
         input_ids_length = inputs.input_ids.shape[1]
-        logger.info(f"Input prompt length in tokens: {input_ids_length}")
+        print_debug(f"Input prompt length in tokens: {input_ids_length}")
 
         # Determine pad_token_id for generation
         gen_pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-        logger.info(f"Using pad_token_id for generation: {gen_pad_token_id}")
+        print_debug(f"Using pad_token_id for generation: {gen_pad_token_id}")
 
         # Generation parameters based on the notebook
-        logger.info(f"Function argument max_new_tokens: {max_new_tokens}") # Log the original arg
-        logger.info(f"Using max_length for model.generate(): {self.max_seq_length}") # Log what's actually used
-        logger.info(f"Generation params: temp={temperature}, top_k={top_k}, top_p={top_p}, rep_penalty={repetition_penalty}, min_p={min_p}")
-        logger.info(f"Calling model.generate() with input_ids_length: {input_ids_length}, model max_seq_length: {self.max_seq_length}")
+        print_debug(f"Function argument max_new_tokens: {max_new_tokens}") # Log the original arg
+        print_debug(f"Using max_length for model.generate(): {self.max_seq_length}") # Log what's actually used
+        print_debug(f"Generation params: temp={temperature}, top_k={top_k}, top_p={top_p}, rep_penalty={repetition_penalty}, min_p={min_p}")
+        print_debug(f"Calling model.generate() with input_ids_length: {input_ids_length}, model max_seq_length: {self.max_seq_length}")
 
         with torch.no_grad():
             generated_ids = self.model.generate(
@@ -170,16 +177,16 @@ class OuteTTSGeneratorV3:
                 pad_token_id=gen_pad_token_id,
             )
         
-        logger.info(f"Generated token IDs shape: {generated_ids.shape}")
-        logger.info(f"Total generated sequence length (prompt + new tokens): {generated_ids.shape[1]}")
-        logger.info(f"Generated token IDs (first 50): {generated_ids[0, :50].tolist()}")
+        print_debug(f"Generated token IDs shape: {generated_ids.shape}")
+        print_debug(f"Total generated sequence length (prompt + new tokens): {generated_ids.shape[1]}")
+        print_debug(f"Generated token IDs (first 50): {generated_ids[0, :50].tolist()}")
 
         # Decode the *entire* output (including prompt) as done in the notebook for token extraction
         decoded_output = self.tokenizer.decode(generated_ids[0], skip_special_tokens=False)
         
-        logger.info(f"Full decoded output length: {len(decoded_output)}")
-        logger.info(f"Decoded output (first 300 chars): {decoded_output[:300]}")
-        logger.info(f"Decoded output (last 300 chars): {decoded_output[-300:] if len(decoded_output) > 300 else decoded_output}")
+        print_debug(f"Full decoded output length: {len(decoded_output)}")
+        print_debug(f"Decoded output (first 300 chars): {decoded_output[:300]}")
+        print_debug(f"Decoded output (last 300 chars): {decoded_output[-300:] if len(decoded_output) > 300 else decoded_output}")
         
         # OuteTTS v1.0 uses c1_XXX and c2_XXX format
         import re
@@ -188,63 +195,63 @@ class OuteTTSGeneratorV3:
         c1_str_matches = re.findall(r"<|c1_(\d*)\||>", decoded_output)
         c2_str_matches = re.findall(r"<|c2_(\d*)\||>", decoded_output)
 
-        logger.info(f"Raw c1 string matches (first 10): {c1_str_matches[:10]}")
-        logger.info(f"Raw c2 string matches (first 10): {c2_str_matches[:10]}")
+        print_debug(f"Raw c1 string matches (first 10): {c1_str_matches[:10]}")
+        print_debug(f"Raw c2 string matches (first 10): {c2_str_matches[:10]}")
 
         try:
             c1 = [int(s) for s in c1_str_matches if s]  # Filter out empty strings and convert
             c2 = [int(s) for s in c2_str_matches if s]  # Filter out empty strings and convert
-            logger.info(f"Found {len(c1)} valid c1 tokens and {len(c2)} valid c2 tokens")
+            print_debug(f"Found {len(c1)} valid c1 tokens and {len(c2)} valid c2 tokens")
         except ValueError as e:
-            logger.error(f"Error converting token strings to integers: {e}")
-            logger.error(f"Problematic c1_str_matches: {c1_str_matches}")
-            logger.error(f"Problematic c2_str_matches: {c2_str_matches}")
+            print_debug(f"ERROR: Error converting token strings to integers: {e}")
+            print_debug(f"Problematic c1_str_matches: {c1_str_matches}")
+            print_debug(f"Problematic c2_str_matches: {c2_str_matches}")
             # Log all special tokens found if there's a ValueError, as it might indicate unexpected token format
             all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output)
-            logger.info(f"All special tokens found on error: {all_special_tokens}")
+            print_debug(f"All special tokens found on error: {all_special_tokens}")
             return False
         
         if not c1 or not c2:
-            logger.error("No valid c1 or c2 tokens found after attempting to filter empty matches.")
-            logger.info(f"Raw c1 matches: {c1_str_matches}")
-            logger.info(f"Raw c2 matches: {c2_str_matches}")
+            print_debug("ERROR: No valid c1 or c2 tokens found after attempting to filter empty matches.")
+            print_debug(f"Raw c1 matches: {c1_str_matches}")
+            print_debug(f"Raw c2 matches: {c2_str_matches}")
             all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output)
-            logger.info(f"All special tokens found when c1/c2 are empty: {list(set(all_special_tokens))}") # Using set to see unique tokens
+            print_debug(f"All special tokens found when c1/c2 are empty: {list(set(all_special_tokens))[:20]}") # Using set to see unique tokens, log first 20
             # Log a larger portion of the decoded output if token extraction fails
-            logger.warning("Potentially problematic decoded output (first 500 chars):")
-            logger.warning(decoded_output[:500])
-            logger.warning("Potentially problematic decoded output (last 500 chars):")
-            logger.warning(decoded_output[-500:])
+            print_debug("Potentially problematic decoded output (first 500 chars):")
+            print_debug(decoded_output[:500])
+            print_debug("Potentially problematic decoded output (last 500 chars):")
+            print_debug(decoded_output[-500:])
             return False
 
         t = min(len(c1), len(c2))
         if t == 0:
-            logger.error("No common tokens between c1 and c2. Cannot generate audio.")
+            print_debug("ERROR: No common tokens between c1 and c2. Cannot generate audio.")
             all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output) # Log special tokens
-            logger.info(f"All special tokens found when t=0: {list(set(all_special_tokens))}")
+            print_debug(f"All special tokens found when t=0: {list(set(all_special_tokens))[:20]}")
             return False
         
-        logger.info(f"Using {t} tokens for DAC decoding.")
+        print_debug(f"Using {t} tokens for DAC decoding.")
         c1 = c1[:t]
         c2 = c2[:t]
         
         if len(c1) > 0:
-            logger.info(f"First 5 c1 tokens: {c1[:5]}")
-            logger.info(f"Last 5 c1 tokens: {c1[-5:]}")
+            print_debug(f"First 5 c1 tokens: {c1[:5]}")
+            print_debug(f"Last 5 c1 tokens: {c1[-5:]}")
         if len(c2) > 0:
-            logger.info(f"First 5 c2 tokens: {c2[:5]}")
-            logger.info(f"Last 5 c2 tokens: {c2[-5:]}")
+            print_debug(f"First 5 c2 tokens: {c2[:5]}")
+            print_debug(f"Last 5 c2 tokens: {c2[-5:]}")
 
         # Check if DAC codes are within expected range (0-1023 for DAC)
         if any(code < 0 or code >= 1024 for code_list in [c1, c2] for code in code_list):
-            logger.warning("Some DAC codes are out of the expected range [0, 1023]. This might indicate an issue.")
+            print_debug("WARNING: Some DAC codes are out of the expected range [0, 1023]. This might indicate an issue.")
             # Log problematic codes
             for i, code in enumerate(c1):
                 if code < 0 or code >= 1024:
-                    logger.warning(f"c1[{i}] = {code} is out of range.")
+                    print_debug(f"c1[{i}] = {code} is out of range.")
             for i, code in enumerate(c2):
                 if code < 0 or code >= 1024:
-                    logger.warning(f"c2[{i}] = {code} is out of range.")
+                    print_debug(f"c2[{i}] = {code} is out of range.")
         
         output_codes = [c1, c2]
         
@@ -252,35 +259,41 @@ class OuteTTSGeneratorV3:
             with torch.no_grad():
                 # Ensure codes are on the correct device for DAC model
                 dac_input_tensor = torch.tensor([output_codes], dtype=torch.int64).to(self.dac.device)
-                logger.info(f"DAC input tensor shape: {dac_input_tensor.shape}, device: {dac_input_tensor.device}")
+                print_debug(f"DAC input tensor shape: {dac_input_tensor.shape}, device: {dac_input_tensor.device}")
                 audio_output = self.dac.decode(dac_input_tensor)
                 audio_output = audio_output.squeeze(0).cpu() # Remove batch dim, move to CPU
-            logger.info(f"Audio generated by DAC, shape: {audio_output.shape}, dtype: {audio_output.dtype}, device: {audio_output.device}")
+            print_debug(f"Audio generated by DAC, shape: {audio_output.shape}, dtype: {audio_output.dtype}, device: {audio_output.device}")
             if audio_output.numel() == 0:
-                logger.error("DAC output is an empty tensor.")
+                print_debug("ERROR: DAC output is an empty tensor.")
                 return False
-            logger.info(f"DAC output min: {audio_output.min().item()}, max: {audio_output.max().item()}, has_nan: {torch.isnan(audio_output).any().item()}, has_inf: {torch.isinf(audio_output).any().item()}")
+            print_debug(f"DAC output min: {audio_output.min().item():.4f}, max: {audio_output.max().item():.4f}, has_nan: {torch.isnan(audio_output).any().item()}, has_inf: {torch.isinf(audio_output).any().item()}")
             # Log a few sample values if not empty
             if audio_output.numel() > 10:
-                logger.info(f"DAC output samples (first 5): {audio_output[:5].tolist()}")
-                logger.info(f"DAC output samples (last 5): {audio_output[-5:].tolist()}")
+                print_debug(f"DAC output samples (first 5): {audio_output[:5].tolist()}")
+                print_debug(f"DAC output samples (last 5): {audio_output[-5:].tolist()}")
             elif audio_output.numel() > 0:
-                logger.info(f"DAC output samples: {audio_output.tolist()}")
+                print_debug(f"DAC output samples: {audio_output.tolist()}")
         except Exception as e:
-            logger.error(f"Error during DAC decoding: {e}")
-            logger.error(f"Problematic output_codes (first 5 of each): c1: {c1[:5]}, c2: {c2[:5]}")
+            print_debug(f"ERROR: Error during DAC decoding: {e}")
+            print_debug(f"Problematic output_codes (first 5 of each): c1: {c1[:5]}, c2: {c2[:5]}")
             return False
 
         try:
+            output_dir_for_file = os.path.dirname(os.path.abspath(output_file))
+            if not os.path.exists(output_dir_for_file):
+                os.makedirs(output_dir_for_file, exist_ok=True)
+                print_debug(f"Created output directory for file: {output_dir_for_file}")
+            
             sf.write(output_file, audio_output.numpy(), samplerate=sample_rate) # Convert to numpy for soundfile
-            logger.info(f"Speech successfully generated and saved to {output_file}")
+            print_debug(f"Speech successfully generated and saved to {output_file}")
             return True
         except Exception as e:
-            logger.error(f"Error saving audio file {output_file}: {e}")
+            print_debug(f"ERROR: Error saving audio file {output_file}: {e}")
             return False
 
 def main():
     """Main function"""
+    print_debug("--- generate.py main() started ---")
     parser = argparse.ArgumentParser(description="Generate speech using fine-tuned OuteTTS (v3 interface)")
     parser.add_argument("--config", type=str, help="Path to the config YAML file")
     parser.add_argument("--model_path", type=str, help="Path to the fine-tuned LoRA adapter (or full model if --no_lora)")
@@ -296,7 +309,7 @@ def main():
     
     # Load config from file if provided, otherwise use command-line args
     if args.config:
-        logger.info(f"Loading configuration from: {args.config}")
+        print_debug(f"Loading configuration from: {args.config}")
         with open(args.config, "r") as f:
             config = yaml.safe_load(f)
         
@@ -333,7 +346,7 @@ def main():
             "sample_rate": 24000, # This should ideally come from DAC's sample_rate
         }
     
-    logger.info(f"Effective configuration: {config}")
+    print_debug(f"Effective configuration: {config}")
 
     # Initialize generator
     generator = OuteTTSGeneratorV3(
@@ -359,9 +372,9 @@ def main():
     )
 
     if success:
-        logger.info(f"Speech generation script finished successfully for: {config['output_file']}")
+        print_debug(f"Speech generation script finished successfully for: {config['output_file']}")
     else:
-        logger.error("Speech generation script failed.")
+        print_debug("ERROR: Speech generation script failed.")
 
 if __name__ == "__main__":
     main() 

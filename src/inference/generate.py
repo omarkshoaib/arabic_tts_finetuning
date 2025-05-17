@@ -133,13 +133,19 @@ class OuteTTSGeneratorV3:
             
         logger.info(f"Processing input text: {text}")
         
-        # For OuteTTS v1.0, the prompt format is different and doesn't use speaker/language tags
-        # Format from Oute_TTS_(1B).ipynb sample code
+        # Build full prompt with required audio header tokens for v1.0 models
         formatted_text = f"<|text_start|>{text}<|text_end|>"
+
+        # Neutral global-feature values recommended by docs (energy=13, spectral_centroid=20, pitch=28)
+        global_feature_tokens = "<|energy_13|><|spectral_centroid_20|><|pitch_28|>"
+
         prompt_text_part = "\n".join([
             "<|im_start|>",
             formatted_text,
             "<|audio_start|><|global_features_start|>",
+            global_feature_tokens,
+            "<|global_features_end|>",
+            "<|word_start|>",
         ])
         
         logger.info(f"Processed text for prompt: {prompt_text_part[:150]}...")
@@ -157,6 +163,9 @@ class OuteTTSGeneratorV3:
             # Set a fixed seed for more consistent results
             torch.manual_seed(3407)
             
+            # Use <|audio_end|> as the stop token so the model keeps generating until audio section is finished
+            audio_end_id = self.tokenizer.convert_tokens_to_ids("<|audio_end|>")
+
             outputs = self.model.generate(
                 input_ids=inputs.input_ids,
                 attention_mask=inputs.attention_mask,
@@ -168,7 +177,7 @@ class OuteTTSGeneratorV3:
                 repetition_penalty=repetition_penalty,
                 min_p=min_p,
                 pad_token_id=pad_token_id, # Important for generation
-                eos_token_id=self.tokenizer.eos_token_id, # Ensure generation stops
+                eos_token_id=audio_end_id, # Ensure generation stops at end of audio section
             )
         
         # Extract generated token IDs, excluding the input prompt

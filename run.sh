@@ -25,6 +25,7 @@ TRAIN_CONFIG="./configs/train_config.yaml"
 INFERENCE_CONFIG="./configs/inference_config.yaml"
 TEXT="" # For inference
 OUTPUT_FILE="" # For inference
+NO_LORA_FLAG=false # For inference --no-lora
 
 # Variables for preprocessing, with defaults matching process_dataset.py
 METADATA_FILE_NAME="metadata_train.csv" # Default original metadata file
@@ -88,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       BATCH_SIZE="$2"
       shift 2
       ;;
+    --no-lora) # For inference, to not load a LoRA adapter
+      NO_LORA_FLAG=true
+      shift 1 # This is a flag, doesn't take a value
+      ;;
     --help)
       echo "Usage: $0 [options]"
       echo ""
@@ -105,6 +110,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --model-tokenizer PATH Model tokenizer path for preprocessing (default: OuteAI/Llama-OuteTTS-1.0-1B)"
       echo "  --whisper-model MODEL  Whisper model name for preprocessing (default: medium)"
       echo "  --batch-size NUM       Batch size for preprocessing (default: 32)"
+      echo "  --no-lora              For inference, run using the base model without loading a LoRA adapter."
       echo "  --help                 Show this help message and exit"
       exit 0
       ;;
@@ -232,6 +238,11 @@ run_inference() {
   mkdir -p "$(dirname "$FINAL_OUTPUT_FILE_PATH")"
   
   CMD_PY_ARGS+=(--output_file "$FINAL_OUTPUT_FILE_PATH")
+
+  # Pass --no-lora to generate.py if the flag was set for run.sh
+  if [ "$NO_LORA_FLAG" = true ]; then
+    CMD_PY_ARGS+=(--no-lora)
+  fi
 
   # Log the command that will be executed
   # Use printf for safer expansion of arguments, especially if they contain spaces or special chars

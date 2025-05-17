@@ -3,6 +3,12 @@
 Inference script for generating speech using the fine-tuned OuteTTS model (v1.0 / v3 interface).
 """
 
+# Attempt to mitigate protobuf import errors by importing tensorflow first
+import tensorflow
+
+# Unsloth should be imported early
+from unsloth import FastModel # Using Unsloth for consistency if fine-tuned with it
+
 import os
 import argparse
 import torch
@@ -17,7 +23,6 @@ from outetts.dac.interface import DacInterface
 # from outetts.models.llama_tts import LlamaTTS # Old v0.3 import
 from outetts.version.v3.prompt_processor import PromptProcessor # v3 import
 from outetts.models.config import ModelConfig # For dummy config
-from unsloth import FastModel # Using Unsloth for consistency if fine-tuned with it
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

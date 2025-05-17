@@ -202,28 +202,49 @@ run_inference() {
   echo "Output dir: $OUTPUT_DIR"
   echo "Config file: $INFERENCE_CONFIG"
   
-  # Update config file with correct paths
-  sed -i "s|model_path:.*|model_path: \"$MODELS_DIR\"|g" "$INFERENCE_CONFIG"
+  # Update config file with correct model_path
+  # Using | as delimiter for sed because paths might contain /
+  sed -i "s|model_path:.*|model_path: \\"$MODELS_DIR\\"|g" "$INFERENCE_CONFIG"
   
-  # Handle optional parameters
-  EXTRA_ARGS=""
+  # Prepare arguments for generate.py
+  CMD_PY_ARGS=()
+  CMD_PY_ARGS+=(--config "$INFERENCE_CONFIG")
+
+  # Text to synthesize
+  # If TEXT is provided to run.sh, pass it to generate.py.
+  # Otherwise, generate.py will use text from its own config or its internal default.
   if [ -n "$TEXT" ]; then
-    EXTRA_ARGS="$EXTRA_ARGS --text \"$TEXT\""
+    CMD_PY_ARGS+=(--text "$TEXT")
   fi
   
+  # Output file path
+  # If OUTPUT_FILE argument was passed to run.sh, use that.
+  # Otherwise, set a default path within the project's OUTPUT_DIR.
+  FINAL_OUTPUT_FILE_PATH=""
   if [ -n "$OUTPUT_FILE" ]; then
-    EXTRA_ARGS="$EXTRA_ARGS --output_file \"$OUTPUT_FILE\""
+    FINAL_OUTPUT_FILE_PATH="$OUTPUT_FILE"
   else
-    # Use default output file
-    OUTPUT_FILE="$OUTPUT_DIR/sample_output.wav"
-    mkdir -p "$OUTPUT_DIR"
+    # Default output file path if not specified via --output-file
+    FINAL_OUTPUT_FILE_PATH="$OUTPUT_DIR/generated_speech_$(date +%Y%m%d_%H%M%S).wav"
   fi
   
-  python3 src/inference/generate.py \
-    --config "$INFERENCE_CONFIG" \
-    $EXTRA_ARGS
+  # Ensure the directory for the output file exists
+  mkdir -p "$(dirname "$FINAL_OUTPUT_FILE_PATH")"
   
-  echo "Inference complete! Output saved to: $OUTPUT_FILE"
+  CMD_PY_ARGS+=(--output_file "$FINAL_OUTPUT_FILE_PATH")
+
+  # Log the command that will be executed
+  # Use printf for safer expansion of arguments, especially if they contain spaces or special chars
+  printf "Running command: python3 src/inference/generate.py"
+  for arg in "${CMD_PY_ARGS[@]}"; do
+    printf " '%s'" "$arg" # Print each argument quoted
+  done
+  printf "\\n"
+
+  # Execute the python script
+  python3 "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}"
+  
+  log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH (verify generate.py behavior)"
 }
 
 # Call function to create directories first

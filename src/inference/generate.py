@@ -122,14 +122,14 @@ class OuteTTSGeneratorV3:
         """
         Generate speech from text using OuteTTS v3 interface.
         """
-        # Create inference prompt using PromptProcessor
-        # The v3 prompt processor typically takes a dictionary or specific args.
-        # For simple text-to-speech, it needs the text, speaker, and lang.
-        # It handles normalization and formatting.
-        
-        # In OuteTTS v1.0, the prompt format should be:
-        # <|lang:{lang}|>[{speaker_name}]:{text}<|startmedia|><|dac|>
-        prompt_text_part = f"<|lang:{lang}|>[{speaker_name}]:{text}<|startmedia|><|dac|>"
+        # For OuteTTS v1.0, the prompt format is different:
+        # format from Oute_TTS_(1B).ipynb sample code
+        formatted_text = f"<|text_start|>{text}<|text_end|>"
+        prompt_text_part = "\n".join([
+            "<|im_start|>",
+            formatted_text,
+            "<|audio_start|><|global_features_start|>",
+        ])
         
         logger.info(f"Processed text for prompt: {prompt_text_part[:150]}...")
         
@@ -160,82 +160,50 @@ class OuteTTSGeneratorV3:
         generated_token_ids = outputs[0, input_ids_length:].tolist()
         logger.info(f"Raw generated token IDs (after prompt): {len(generated_token_ids)}")
 
-        # Convert generated token IDs to DAC codes (0-indexed)
-        # Based on Oute_TTS_(1B).ipynb inference logic
-        logger.info("Converting generated token IDs to DAC codes...")
-        tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        # Convert to string for regex processing
+        logger.info("Converting generated token IDs to audio codes...")
+        decoded_output = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
         
-        # Log the first 20 tokens to see what's being generated
-        logger.info("First 20 tokens of generation:")
-        for i, token in enumerate(tokens[:20]):
-            logger.info(f"  Token {i}: '{token}' (ID: {generated_token_ids[i] if i < len(generated_token_ids) else 'N/A'})")
+        # Log a portion of the decoded output for debugging
+        logger.info(f"Decoded output (first 200 chars): {decoded_output[:200]}")
         
-        decoded_dac_codes = []
+        # OuteTTS v1.0 uses c1_XXX and c2_XXX format instead of DAC_XXX
+        import re
+        c1 = list(map(int, re.findall(r"<\|c1_(\d+)\|>", decoded_output)))
+        c2 = list(map(int, re.findall(r"<\|c2_(\d+)\|>", decoded_output)))
         
-        # Hardcoded DAC offset ID as used in the Oute_TTS_(1B) notebook
-        dac_offset_id = 32000  # This is the offset for v1.0 DAC tokens
+        logger.info(f"Found {len(c1)} c1 tokens and {len(c2)} c2 tokens")
         
-        logger.info(f"Using DAC offset ID: {dac_offset_id}")
-        
-        for token_idx, token_str in enumerate(tokens):
-            if token_str.startswith("<DAC_"):
-                try:
-                    dac_id_val = int(token_str[5:-1]) # Extract XXX from <DAC_XXX>
-                    decoded_dac_codes.append(dac_id_val - dac_offset_id)
-                except ValueError:
-                    logger.warning(f"Could not parse DAC ID from token: {token_str} at index {token_idx}")
-            elif token_str == "<|eom|>": # End of media token
-                logger.info(f"Found '<|eom|>' token at index {token_idx}. Stopping DAC code collection.")
-                break
-            elif token_str in [self.tokenizer.eos_token, self.tokenizer.pad_token]:
-                # Depending on generation, EOS or PAD might appear. If they appear before EOM,
-                # it might signify premature end of useful DAC tokens.
-                logger.info(f"Found '{token_str}' token at index {token_idx} before <|eom|>. Considering this as end of DAC stream for now.")
-                break
-        
-        logger.info(f"Number of decoded DAC codes (0-indexed) after manual processing: {len(decoded_dac_codes)}")
-
-        if not decoded_dac_codes:
-            logger.error("No valid DAC codes were decoded by the prompt_processor.")
+        # Ensure equal number of tokens from both codebooks
+        t = min(len(c1), len(c2))
+        if t == 0:
+            logger.error("No valid audio tokens found in the output")
             return False
-
-        # Use n_codebooks retrieved during __init__
-        n_codebooks = self.dac_n_codebooks
-        if n_codebooks <= 0:
-            logger.error(f"Invalid n_codebooks ({n_codebooks}) obtained during initialization. Cannot proceed.")
-            return False
-
-        num_tokens = len(decoded_dac_codes)
-        if num_tokens % n_codebooks != 0:
-            remainder = num_tokens % n_codebooks
-            logger.warning(
-                f"Number of decoded DAC codes ({num_tokens}) is not divisible by n_codebooks ({n_codebooks}). "
-                f"Remainder is {remainder}. Trimming {remainder} tokens from the end."
-            )
-            decoded_dac_codes = decoded_dac_codes[:num_tokens - remainder]
-            num_tokens = len(decoded_dac_codes) # Update num_tokens after trimming
-            logger.info(f"Number of DAC codes after trimming: {num_tokens}")
-
-        if not decoded_dac_codes or num_tokens < n_codebooks:
-            logger.error("Not enough DAC codes to form at least one complete set for all codebooks after (optional) trimming.")
-            return False
-
-        # Convert to tensor and reshape for DAC decoding
+            
+        c1 = c1[:t]
+        c2 = c2[:t]
+        
+        # Format for DAC
+        audio_codes = [c1, c2]
+        logger.info(f"Prepared audio codes shape: {len(audio_codes)} codebooks, {len(audio_codes[0])} tokens each")
+        
+        # Create tensor in the format expected by DAC
         try:
-            codes_tensor = torch.LongTensor(decoded_dac_codes).to(self.device)
-            # Reshape to [Batch=1, N_Codebooks, Time_per_codebook]
-            codes_for_dac = codes_tensor.reshape(1, n_codebooks, -1)
-            logger.info(f"Reshaped codes for DAC: {codes_for_dac.shape}")
+            codes_tensor = torch.tensor([audio_codes], dtype=torch.int64).to(self.device)
+            logger.info(f"Codes tensor shape: {codes_tensor.shape}")
         except Exception as e:
-            logger.error(f"Error during tensor conversion or reshaping of DAC codes: {e}")
-            logger.error(f"Decoded DAC codes (at error point, len={len(decoded_dac_codes)}): {decoded_dac_codes[:20]}...") # Log first 20
-            logger.error(f"n_codebooks: {n_codebooks}")
+            logger.error(f"Error creating codes tensor: {e}")
             return False
 
         # Decode using DAC
-        logger.info("Decoding DAC codes to audio...")
-        audio_waveform = self.dac.decode(codes_for_dac) # Expects tensor of indices
-        
+        logger.info("Decoding audio codes to audio...")
+        try:
+            audio_waveform = self.dac.decode(codes_tensor)
+        except Exception as e:
+            logger.error(f"Error decoding audio: {e}")
+            logger.error(f"Codes tensor shape: {codes_tensor.shape}, dtype: {codes_tensor.dtype}")
+            return False
+
         if audio_waveform is None or audio_waveform.ndim == 0 or audio_waveform.shape[-1] == 0:
             logger.error("DAC decoding resulted in empty or invalid audio.")
             return False

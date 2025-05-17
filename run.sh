@@ -269,8 +269,12 @@ run_inference() {
 
   # Print the detailed log from the python script
   if [ -f "$PYTHON_SCRIPT_LOG_FILE" ]; then
+    log_message "INFO" "Ensuring output directory for main log exists: $OUTPUT_DIR"
+    mkdir -p "$OUTPUT_DIR" # Re-ensure output directory for main log
+    log_message "INFO" "Main log file for appending Python script log: $LOG_FILE"
     log_message "INFO" "--- Start of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
-    cat "$PYTHON_SCRIPT_LOG_FILE" | tee -a "$LOG_FILE" # Also append to main log
+    cat "$PYTHON_SCRIPT_LOG_FILE" >> "$LOG_FILE" # Append Python log to main log
+    cat "$PYTHON_SCRIPT_LOG_FILE" # Also print Python log to stdout for Colab visibility
     log_message "INFO" "--- End of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
   else
     log_message "WARNING" "Python script detailed log file not found: $PYTHON_SCRIPT_LOG_FILE"

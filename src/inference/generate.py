@@ -111,8 +111,8 @@ class OuteTTSGeneratorV3:
         self,
         text: str,
         output_file: str,
-        speaker_name: str = "default_speaker", # Default speaker tag
-        lang: str = "ar", # Explicitly using "lang" as per v3
+        speaker_name: str = "default_speaker", # Default speaker tag (not used in OuteTTS v1.0)
+        lang: str = "ar", # Explicitly using "lang" as per v3 (not used in OuteTTS v1.0)
         top_p: float = 0.9,
         top_k: int = 40, # Added top_k parameter
         temperature: float = 0.4, # Changed from 0.7 to 0.4 to match notebook
@@ -124,8 +124,17 @@ class OuteTTSGeneratorV3:
         """
         Generate speech from text using OuteTTS v3 interface.
         """
-        # For OuteTTS v1.0, the prompt format is different:
-        # format from Oute_TTS_(1B).ipynb sample code
+        # Clean and normalize input text (important for Arabic text)
+        # Remove any excess whitespace
+        text = text.strip()
+        if not text:
+            logger.error("Input text is empty after cleaning")
+            return False
+            
+        logger.info(f"Processing input text: {text}")
+        
+        # For OuteTTS v1.0, the prompt format is different and doesn't use speaker/language tags
+        # Format from Oute_TTS_(1B).ipynb sample code
         formatted_text = f"<|text_start|>{text}<|text_end|>"
         prompt_text_part = "\n".join([
             "<|im_start|>",
@@ -144,6 +153,9 @@ class OuteTTSGeneratorV3:
             # Generate, ensuring pad_token_id is eos_token_id if not set, or tokenizer.pad_token_id
             # OuteTTS models often use eos_token_id for padding during generation.
             pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.pad_token_id is None else self.tokenizer.pad_token_id
+            
+            # Set a fixed seed for more consistent results
+            torch.manual_seed(3407)
             
             outputs = self.model.generate(
                 input_ids=inputs.input_ids,
@@ -170,24 +182,44 @@ class OuteTTSGeneratorV3:
         
         # Log a portion of the decoded output for debugging
         logger.info(f"Decoded output (first 200 chars): {decoded_output[:200]}")
+        logger.info(f"Decoded output (last 200 chars): {decoded_output[-200:] if len(decoded_output) > 200 else decoded_output}")
         
         # OuteTTS v1.0 uses c1_XXX and c2_XXX format instead of DAC_XXX
         import re
-        c1 = list(map(int, re.findall(r"<\|c1_(\d+)\|>", decoded_output)))
-        c2 = list(map(int, re.findall(r"<\|c2_(\d+)\|>", decoded_output)))
+        c1_matches = re.findall(r"<\|c1_(\d+)\|>", decoded_output)
+        c2_matches = re.findall(r"<\|c2_(\d+)\|>", decoded_output)
         
-        logger.info(f"Found {len(c1)} c1 tokens and {len(c2)} c2 tokens")
+        # Convert matches to integers
+        try:
+            c1 = list(map(int, c1_matches))
+            c2 = list(map(int, c2_matches))
+            logger.info(f"Found {len(c1)} c1 tokens and {len(c2)} c2 tokens")
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error converting token values to integers: {e}")
+            logger.error(f"First few c1 matches: {c1_matches[:10]}")
+            logger.error(f"First few c2 matches: {c2_matches[:10]}")
+            return False
         
+        # More detailed debugging for token extraction
+        if len(c1) == 0 or len(c2) == 0:
+            logger.error("No valid codebook tokens found. Examining decoded output...")
+            # Print all special tokens found for debugging
+            all_special = re.findall(r"<\|[^|]+\|>", decoded_output)
+            logger.error(f"All special tokens found: {all_special[:20]} ...")
+            logger.error("This suggests the model is not generating audio tokens correctly.")
+            logger.error("Check if the model weights are appropriate for TTS generation.")
+            return False
+            
         # Ensure equal number of tokens from both codebooks
         t = min(len(c1), len(c2))
-        if t == 0:
-            logger.error("No valid audio tokens found in the output")
+        if t < 10:  # If we have very few tokens, this won't produce usable audio
+            logger.error(f"Too few codebook tokens found: only {t} valid token pairs")
             return False
             
         c1 = c1[:t]
         c2 = c2[:t]
         
-        # Format for DAC
+        # Format for DAC - exactly like the notebook example
         audio_codes = [c1, c2]
         logger.info(f"Prepared audio codes shape: {len(audio_codes)} codebooks, {len(audio_codes[0])} tokens each")
         

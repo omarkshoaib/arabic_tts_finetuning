@@ -6,14 +6,16 @@ use_lora: true  # Whether the model_path points to a LoRA adapter
 base_model: "OuteAI/Llama-OuteTTS-1.0-1B"  # Base model for LoRA
 
 # Generation settings
-speaker: "salesperson"  # Speaker name
-language: "ar"  # Language code (ar for Arabic)
+speaker: "salesperson"  # Speaker name (not used in OuteTTS v1.0)
+language: "ar"  # Language code (not used in OuteTTS v1.0)
 top_p: 0.9  # Top-p sampling parameter
-temperature: 0.7  # Temperature for sampling
-repetition_penalty: 1.2  # Repetition penalty parameter
-max_new_tokens: 1024  # Maximum number of new tokens to generate
+temperature: 0.4  # Temperature for sampling (updated to match notebook)
+top_k: 40  # Top-k sampling parameter (added from notebook)
+min_p: 0.05  # Minimum probability parameter (added from notebook)
+repetition_penalty: 1.1  # Repetition penalty parameter (updated to match notebook)
+max_new_tokens: 2048  # Maximum number of new tokens to generate (increased for better output)
 sample_rate: 24000  # Sample rate of the output audio
 
 # Example text (can be overridden by command-line args)
-text: "طبعا عندنا مثلا شقق بمساحة مئة و خمسون متر مربع"
+text: "مرحبا، أنا نموذج توليد صوت يمكنني نطق اللغة العربية بشكل طبيعي."
 output_file: "../outputs/sample_output.wav" 

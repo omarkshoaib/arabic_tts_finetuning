@@ -204,10 +204,16 @@ run_train() {
 # Function for inference
 run_inference() {
   echo "===== GENERATING SPEECH ====="
-  echo "Models dir: $MODELS_DIR"
-  echo "Output dir: $OUTPUT_DIR"
-  echo "Config file: $INFERENCE_CONFIG"
+  log_message "INFO" "Current working directory: $(pwd)"
+  log_message "INFO" "Models dir: $MODELS_DIR"
+  log_message "INFO" "Output dir: $OUTPUT_DIR"
+  log_message "INFO" "Inference Config file: $INFERENCE_CONFIG"
+  log_message "INFO" "Python script path: ${SCRIPT_DIR}/src/inference/generate.py"
   
+  # Define a specific log file for the python script's detailed output
+  PYTHON_SCRIPT_LOG_FILE="$OUTPUT_DIR/generate_py_$(date +%Y%m%d_%H%M%S).log"
+  log_message "INFO" "Detailed Python script log will be at: $PYTHON_SCRIPT_LOG_FILE"
+
   # Update config file with correct model_path
   # Using | as delimiter for sed because paths might contain /
   sed -i "s|model_path:.*|model_path: \"$MODELS_DIR\"|g" "$INFERENCE_CONFIG"
@@ -250,13 +256,24 @@ run_inference() {
   for arg in "${CMD_PY_ARGS[@]}"; do
     printf " '%s'" "$arg" # Print each argument quoted
   done
-  printf "\\n"
+  printf "\n"
 
-  # Execute the python script
-  if python3 -u "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}"; then # Added -u for unbuffered output
+  # Execute the python script and redirect its output to PYTHON_SCRIPT_LOG_FILE
+  if python3 -u "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}" > "$PYTHON_SCRIPT_LOG_FILE" 2>&1; then
+    log_message "INFO" "Python script finished successfully (according to exit code)."
     log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH (verify generate.py behavior)"
   else
-    log_message "ERROR" "Inference script failed. Check logs above."
+    log_message "ERROR" "Python script failed (non-zero exit code)."
+    log_message "ERROR" "Inference script failed. Check logs above and detailed log below."
+  fi
+
+  # Print the detailed log from the python script
+  if [ -f "$PYTHON_SCRIPT_LOG_FILE" ]; then
+    log_message "INFO" "--- Start of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
+    cat "$PYTHON_SCRIPT_LOG_FILE" | tee -a "$LOG_FILE" # Also append to main log
+    log_message "INFO" "--- End of Python Script Log ($PYTHON_SCRIPT_LOG_FILE) ---"
+  else
+    log_message "WARNING" "Python script detailed log file not found: $PYTHON_SCRIPT_LOG_FILE"
   fi
 }
 

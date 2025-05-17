@@ -64,6 +64,14 @@ def main():
     # Set fixed seed for reproducibility
     torch.manual_seed(3407)
     
+    # Determine eos_token_id as "<|audio_end|>" token so generation stops properly.
+    audio_end_token = "<|audio_end|>"
+    if audio_end_token in tokenizer.vocab or audio_end_token in tokenizer.get_vocab():
+        eos_id = tokenizer.convert_tokens_to_ids(audio_end_token)
+    else:
+        eos_id = tokenizer.eos_token_id  # fallback
+    logger.info(f"Using eos_token_id: {eos_id} (token: {audio_end_token if eos_id!=tokenizer.eos_token_id else 'default <eos>'})")
+    
     # Generate tokens
     logger.info("Generating token sequence...")
     with torch.no_grad():
@@ -74,16 +82,17 @@ def main():
             top_p=0.9,
             repetition_penalty=1.1,
             min_p=0.05,
-            max_new_tokens=2048,  # Limit generation length
-            # eos_token_id=tokenizer.eos_token_id, # Optional: Be explicit
-            # pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id # Optional
+            max_new_tokens=2048,
+            eos_token_id=eos_id,
+            pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
         )
     logger.info("Token sequence generated.")
     
     # Extract and decode generated tokens
     generated_ids_trimmed = generated_ids[:, input_length:]
     logger.info(f"Generated IDs trimmed shape: {generated_ids_trimmed.shape}")
-    logger.info(f"First 10 trimmed token IDs: {generated_ids_trimmed[0, :10].tolist()}")
+    logger.info(f"First 50 trimmed token IDs: {generated_ids_trimmed[0, :50].tolist()}")
+    logger.info(f"Last 10 trimmed token IDs: {generated_ids_trimmed[0, -10:].tolist()}")
     
     decoded_output = tokenizer.decode(generated_ids_trimmed[0], skip_special_tokens=False)
     
@@ -120,8 +129,11 @@ def main():
     if len(c1) < 10 or len(c2) < 10: # Increased threshold slightly
         logger.error(f"Too few audio tokens found (c1: {len(c1)}, c2: {len(c2)}). Cannot generate audio.")
         # Log all special tokens found if audio token extraction fails badly
-        all_special_tokens = re.findall(r"<\\|[^|]+\\|>", decoded_output)
-        logger.info(f"All special tokens found in decoded_output: {all_special_tokens[:100]}") # Log even more
+        if decoded_output:
+            all_special_tokens = re.findall(r"<\\|[^|]+\\|>", decoded_output)
+            logger.info(f"All special tokens found in (non-empty) decoded_output: {all_special_tokens[:100]}") # Log even more
+        else:
+            logger.warning("decoded_output was empty, so no special tokens to find.")
         import sys
         sys.exit(1) # Force exit with error code
     

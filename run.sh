@@ -204,7 +204,7 @@ run_inference() {
   
   # Update config file with correct model_path
   # Using | as delimiter for sed because paths might contain /
-  sed -i "s|model_path:.*|model_path: \\"$MODELS_DIR\\"|g" "$INFERENCE_CONFIG"
+  sed -i "s|model_path:.*|model_path: \"$MODELS_DIR\"|g" "$INFERENCE_CONFIG"
   
   # Prepare arguments for generate.py
   CMD_PY_ARGS=()

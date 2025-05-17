@@ -5,8 +5,8 @@ model_name: "OuteAI/Llama-OuteTTS-1.0-1B"  # Base model to fine-tune
 max_seq_length: 2048  # Maximum sequence length for training
 
 # Data settings
-data_dir: "../data/processed"  # Directory containing processed parquet files
-output_dir: "../models/arabic_sales_tts"  # Directory to save the fine-tuned model
+data_dir: "./data/processed"
+output_dir: "./models/arabic_sales_tts"
 val_split: 0.05  # Fraction of data to use for validation
 
 # Training parameters

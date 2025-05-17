@@ -66,9 +66,9 @@ class OuteTTSGeneratorV3:
             )
             logger.info("LoRA adapter loaded and merged.")
         else:
-            logger.info(f"Loading full model from '{self.model_path}' (no LoRA)")
+            logger.info(f"Loading full model from '{self.base_model_name}' (no LoRA - model_path '{self.model_path}' is ignored for base model loading)")
             self.model, self.tokenizer = FastModel.from_pretrained(
-                model_name=self.model_path, # This is the base model itself when not using LoRA
+                model_name=self.base_model_name, # Should be base_model_name
                 max_seq_length=self.max_seq_length,
                 dtype=None, # Let Unsloth choose optimal dtype
                 load_in_4bit=False, # Assuming base model inference is not 4-bit

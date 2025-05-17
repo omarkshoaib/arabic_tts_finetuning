@@ -4,7 +4,7 @@ Inference script for generating speech using the fine-tuned OuteTTS model (v1.0 
 """
 
 # Attempt to mitigate protobuf import errors by importing tensorflow first
-import tensorflow
+# import tensorflow # Commenting out to test if it resolves segmentation fault
 
 # Unsloth should be imported early
 from unsloth import FastModel # Using Unsloth for consistency if fine-tuned with it

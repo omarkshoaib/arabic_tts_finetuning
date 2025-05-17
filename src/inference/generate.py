@@ -164,11 +164,32 @@ class OuteTTSGeneratorV3:
         generated_token_ids = outputs[0, input_ids_length:].tolist()
         logger.info(f"Raw generated token IDs (after prompt): {len(generated_token_ids)}")
 
-        # Decode DAC tokens using PromptProcessorV3. This handles the vocabulary shift
-        # and filters for valid DAC token range based on its internal audio_processor config.
-        # The result (decoded_dac_codes) should be 0-indexed DAC codes.
-        decoded_dac_codes = self.prompt_processor.decode_dac_tokens(generated_token_ids)
-        logger.info(f"Number of decoded DAC codes (0-indexed) from prompt_processor: {len(decoded_dac_codes)}")
+        # Convert generated token IDs to DAC codes (0-indexed)
+        # Based on Oute_TTS_(1B).ipynb inference logic
+        logger.info("Converting generated token IDs to DAC codes...")
+        tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        decoded_dac_codes = []
+        dac_offset_id = self.prompt_processor.audio_processor.dac_offset_id # Should be 32000
+        
+        logger.info(f"Using DAC offset ID: {dac_offset_id}")
+        
+        for token_idx, token_str in enumerate(tokens):
+            if token_str.startswith("<DAC_"):
+                try:
+                    dac_id_val = int(token_str[5:-1]) # Extract XXX from <DAC_XXX>
+                    decoded_dac_codes.append(dac_id_val - dac_offset_id)
+                except ValueError:
+                    logger.warning(f"Could not parse DAC ID from token: {token_str} at index {token_idx}")
+            elif token_str == "<|eom|>": # End of media token
+                logger.info(f"Found '<|eom|>' token at index {token_idx}. Stopping DAC code collection.")
+                break
+            elif token_str in [self.tokenizer.eos_token, self.tokenizer.pad_token]:
+                # Depending on generation, EOS or PAD might appear. If they appear before EOM,
+                # it might signify premature end of useful DAC tokens.
+                logger.info(f"Found '{token_str}' token at index {token_idx} before <|eom|>. Considering this as end of DAC stream for now.")
+                break
+        
+        logger.info(f"Number of decoded DAC codes (0-indexed) after manual processing: {len(decoded_dac_codes)}")
 
         if not decoded_dac_codes:
             logger.error("No valid DAC codes were decoded by the prompt_processor.")

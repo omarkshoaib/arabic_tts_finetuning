@@ -97,10 +97,17 @@ def main():
     logger.info("---- End of Full Decoded Output ----")
     
     # Extract audio tokens
-    c1 = list(map(int, re.findall(r"<\\|c1_(\\d+)\\|>", decoded_output)))
-    c2 = list(map(int, re.findall(r"<\\|c2_(\\d+)\\|>", decoded_output)))
+    # Use \d* to capture zero or more digits, then filter empty strings before int conversion
+    c1_str_matches = re.findall(r"<\\|c1_(\\d*)\\|>", decoded_output)
+    c2_str_matches = re.findall(r"<\\|c2_(\\d*)\\|>", decoded_output)
+
+    logger.info(f"Raw c1 string matches (first 10): {c1_str_matches[:10]}")
+    logger.info(f"Raw c2 string matches (first 10): {c2_str_matches[:10]}")
+
+    c1 = [int(s) for s in c1_str_matches if s]  # Filter out empty strings
+    c2 = [int(s) for s in c2_str_matches if s]  # Filter out empty strings
     
-    logger.info(f"Found {len(c1)} c1 tokens and {len(c2)} c2 tokens")
+    logger.info(f"Found {len(c1)} valid c1 tokens and {len(c2)} valid c2 tokens")
     
     if len(c1) > 0:
         logger.info(f"First 5 c1 tokens: {c1[:5]}")

@@ -83,12 +83,9 @@ class OuteTTSGeneratorV3:
 
         # Initialize DAC
         logger.info("Initializing DAC interface...")
-        # Create a dummy ModelConfig for DacInterface if it needs one
-        dummy_config = ModelConfig(
-            audio_codec_path=dac_ckpt, # Path to DAC model if not default
-            device=self.device
-        )
-        self.dac = DacInterface(config=dummy_config) # Pass config if DacInterface expects it
+        # The DacInterface expects device and optionally model_path (dac_ckpt),
+        # not a config object.
+        self.dac = DacInterface(device=self.device, model_path=dac_ckpt)
         
         # Initialize v3 PromptProcessor
         logger.info("Initializing v3 PromptProcessor...")

@@ -114,161 +114,166 @@ class OuteTTSGeneratorV3:
         speaker_name: str = "default_speaker", # Default speaker tag (not used in OuteTTS v1.0)
         lang: str = "ar", # Explicitly using "lang" as per v3 (not used in OuteTTS v1.0)
         top_p: float = 0.9,
-        top_k: int = 40, # Added top_k parameter
-        temperature: float = 0.4, # Changed from 0.7 to 0.4 to match notebook
-        repetition_penalty: float = 1.1, # Changed from 1.2 to 1.1
-        min_p: float = 0.05, # Added min_p parameter
-        max_new_tokens: int = 2048, # Max tokens for the *entire* output (prompt + generation)
+        top_k: int = 40, 
+        temperature: float = 0.4, 
+        repetition_penalty: float = 1.1, 
+        min_p: float = 0.05, 
+        max_new_tokens: int = 2048, 
         sample_rate: int = 24000,
     ):
         """
-        Generate speech from text using OuteTTS v3 interface.
+        Generate speech from text using OuteTTS v1.0 model.
+        Prompt structure and generation parameters are based on Oute_TTS_(1B).ipynb.
         """
-        # Clean and normalize input text (important for Arabic text)
-        # Remove any excess whitespace
+        # Clean and normalize input text
         text = text.strip()
         if not text:
             logger.error("Input text is empty after cleaning")
             return False
             
-        logger.info(f"Processing input text: {text}")
+        logger.info(f"Processing input text: '{text}'")
         
-        # Build full prompt with required audio header tokens for v1.0 models
+        # Build prompt based on Oute_TTS_(1B).ipynb
+        # The notebook prompt ends after <|global_features_start|>
+        # The model is expected to generate the global feature tokens and the rest.
         formatted_text = f"<|text_start|>{text}<|text_end|>"
-
-        # Neutral global-feature values recommended by docs (energy=13, spectral_centroid=20, pitch=28)
-        global_feature_tokens = "<|energy_13|><|spectral_centroid_20|><|pitch_28|>"
-
         prompt_text_part = "\n".join([
             "<|im_start|>",
             formatted_text,
             "<|audio_start|><|global_features_start|>",
-            global_feature_tokens,
-            "<|global_features_end|>",
-            "<|word_start|>",
+            # Removed: global_feature_tokens, "<|global_features_end|>", "<|word_start|>"
         ])
         
-        logger.info(f"Processed text for prompt: {prompt_text_part[:150]}...")
+        logger.info(f"Constructed prompt (first 150 chars): {prompt_text_part[:150]}...")
+        logger.debug(f"Full prompt being tokenized:\n{prompt_text_part}")
         
         inputs = self.tokenizer(prompt_text_part, return_tensors="pt").to(self.device)
         input_ids_length = inputs.input_ids.shape[1]
         logger.info(f"Input prompt length in tokens: {input_ids_length}")
 
-        logger.info("Generating DAC codes...")
-        with torch.no_grad():
-            # Generate, ensuring pad_token_id is eos_token_id if not set, or tokenizer.pad_token_id
-            # OuteTTS models often use eos_token_id for padding during generation.
-            pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.pad_token_id is None else self.tokenizer.pad_token_id
-            
-            # Set a fixed seed for more consistent results
-            torch.manual_seed(3407)
-            
-            # Use <|audio_end|> as the stop token so the model keeps generating until audio section is finished
-            audio_end_id = self.tokenizer.convert_tokens_to_ids("<|audio_end|>")
+        # Determine pad_token_id for generation
+        # If tokenizer.pad_token_id is None, use tokenizer.eos_token_id
+        # This is a common practice when pad_token_id is not explicitly set.
+        gen_pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+        logger.info(f"Using pad_token_id for generation: {gen_pad_token_id}")
 
-            outputs = self.model.generate(
-                input_ids=inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                max_new_tokens=max_new_tokens, # Max tokens for the DAC codes part
-                do_sample=True,
+        # Generation parameters based on the notebook
+        logger.info(f"Generating with max_new_tokens: {max_new_tokens}")
+        logger.info(f"Generation params: temp={temperature}, top_k={top_k}, top_p={top_p}, rep_penalty={repetition_penalty}, min_p={min_p}")
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                temperature=temperature,
                 top_k=top_k,
                 top_p=top_p,
-                temperature=temperature,
                 repetition_penalty=repetition_penalty,
                 min_p=min_p,
-                pad_token_id=pad_token_id, # Important for generation
-                eos_token_id=audio_end_id, # Ensure generation stops at end of audio section
+                max_new_tokens=max_new_tokens, # Max new tokens for the model to generate
+                # eos_token_id=eos_id, # Removed: Notebook does not use explicit EOS for generation
+                pad_token_id=gen_pad_token_id, # Use determined pad_token_id
+                # bos_token_id=self.tokenizer.bos_token_id, # Usually not needed if prompt has BOS
+                # no_repeat_ngram_size=0, # Default, can be tuned
+                # num_beams=1, # Default (greedy/sampling)
             )
         
-        # Extract generated token IDs, excluding the input prompt
-        # generated_token_ids will be a list of integers.
-        generated_token_ids = outputs[0, input_ids_length:].tolist()
-        logger.info(f"Raw generated token IDs (after prompt): {len(generated_token_ids)}")
+        logger.info(f"Generated token IDs shape: {generated_ids.shape}")
+        logger.info(f"Generated token IDs (first 50): {generated_ids[0, :50].tolist()}")
 
-        # Convert to string for regex processing
-        logger.info("Converting generated token IDs to audio codes...")
-        decoded_output = self.tokenizer.decode(generated_token_ids, skip_special_tokens=False)
+        # Decode the *entire* output (including prompt) as done in the notebook for token extraction
+        decoded_output = self.tokenizer.decode(generated_ids[0], skip_special_tokens=False)
         
-        # Log a portion of the decoded output for debugging
-        logger.info(f"Decoded output (first 200 chars): {decoded_output[:200]}")
-        logger.info(f"Decoded output (last 200 chars): {decoded_output[-200:] if len(decoded_output) > 200 else decoded_output}")
+        logger.info(f"Full decoded output length: {len(decoded_output)}")
+        logger.info(f"Decoded output (first 300 chars): {decoded_output[:300]}")
+        logger.info(f"Decoded output (last 300 chars): {decoded_output[-300:] if len(decoded_output) > 300 else decoded_output}")
         
-        # OuteTTS v1.0 uses c1_XXX and c2_XXX format instead of DAC_XXX
+        # OuteTTS v1.0 uses c1_XXX and c2_XXX format
         import re
-        c1_matches = re.findall(r"<\|c1_(\d+)\|>", decoded_output)
-        c2_matches = re.findall(r"<\|c2_(\d+)\|>", decoded_output)
-        
-        # Convert matches to integers
+        # Regex to find <|c1_DIGITS|> and <|c2_DIGITS|>
+        # Use \d* to capture zero or more digits, then filter empty strings before int conversion
+        c1_str_matches = re.findall(r"<|c1_(\d*)\||>", decoded_output)
+        c2_str_matches = re.findall(r"<|c2_(\d*)\||>", decoded_output)
+
+        logger.info(f"Raw c1 string matches (first 10): {c1_str_matches[:10]}")
+        logger.info(f"Raw c2 string matches (first 10): {c2_str_matches[:10]}")
+
         try:
-            c1 = list(map(int, c1_matches))
-            c2 = list(map(int, c2_matches))
-            logger.info(f"Found {len(c1)} c1 tokens and {len(c2)} c2 tokens")
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error converting token values to integers: {e}")
-            logger.error(f"First few c1 matches: {c1_matches[:10]}")
-            logger.error(f"First few c2 matches: {c2_matches[:10]}")
+            c1 = [int(s) for s in c1_str_matches if s]  # Filter out empty strings and convert
+            c2 = [int(s) for s in c2_str_matches if s]  # Filter out empty strings and convert
+            logger.info(f"Found {len(c1)} valid c1 tokens and {len(c2)} valid c2 tokens")
+        except ValueError as e:
+            logger.error(f"Error converting token strings to integers: {e}")
+            logger.error(f"Problematic c1_str_matches: {c1_str_matches}")
+            logger.error(f"Problematic c2_str_matches: {c2_str_matches}")
+            # Log all special tokens found if there's a ValueError, as it might indicate unexpected token format
+            all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output)
+            logger.info(f"All special tokens found on error: {all_special_tokens}")
             return False
         
-        # More detailed debugging for token extraction
-        if len(c1) == 0 or len(c2) == 0:
-            logger.error("No valid codebook tokens found. Examining decoded output...")
-            # Print all special tokens found for debugging
-            all_special = re.findall(r"<\|[^|]+\|>", decoded_output)
-            logger.error(f"All special tokens found: {all_special[:20]} ...")
-            logger.error("This suggests the model is not generating audio tokens correctly.")
-            logger.error("Check if the model weights are appropriate for TTS generation.")
+        if not c1 or not c2:
+            logger.error("No valid c1 or c2 tokens found after attempting to filter empty matches.")
+            logger.info(f"Raw c1 matches: {c1_str_matches}")
+            logger.info(f"Raw c2 matches: {c2_str_matches}")
+            all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output)
+            logger.info(f"All special tokens found when c1/c2 are empty: {list(set(all_special_tokens))}") # Using set to see unique tokens
+            # Log a larger portion of the decoded output if token extraction fails
+            logger.warning("Potentially problematic decoded output (first 500 chars):")
+            logger.warning(decoded_output[:500])
+            logger.warning("Potentially problematic decoded output (last 500 chars):")
+            logger.warning(decoded_output[-500:])
             return False
-            
-        # Ensure equal number of tokens from both codebooks
+
         t = min(len(c1), len(c2))
-        if t < 10:  # If we have very few tokens, this won't produce usable audio
-            logger.error(f"Too few codebook tokens found: only {t} valid token pairs")
+        if t == 0:
+            logger.error("No common tokens between c1 and c2. Cannot generate audio.")
+            all_special_tokens = re.findall(r"<|[^|]+|>", decoded_output) # Log special tokens
+            logger.info(f"All special tokens found when t=0: {list(set(all_special_tokens))}")
             return False
-            
+        
+        logger.info(f"Using {t} tokens for DAC decoding.")
         c1 = c1[:t]
         c2 = c2[:t]
         
-        # Format for DAC - exactly like the notebook example
-        audio_codes = [c1, c2]
-        logger.info(f"Prepared audio codes shape: {len(audio_codes)} codebooks, {len(audio_codes[0])} tokens each")
+        if len(c1) > 0:
+            logger.info(f"First 5 c1 tokens: {c1[:5]}")
+            logger.info(f"Last 5 c1 tokens: {c1[-5:]}")
+        if len(c2) > 0:
+            logger.info(f"First 5 c2 tokens: {c2[:5]}")
+            logger.info(f"Last 5 c2 tokens: {c2[-5:]}")
+
+        # Check if DAC codes are within expected range (0-1023 for DAC)
+        if any(code < 0 or code >= 1024 for code_list in [c1, c2] for code in code_list):
+            logger.warning("Some DAC codes are out of the expected range [0, 1023]. This might indicate an issue.")
+            # Log problematic codes
+            for i, code in enumerate(c1):
+                if code < 0 or code >= 1024:
+                    logger.warning(f"c1[{i}] = {code} is out of range.")
+            for i, code in enumerate(c2):
+                if code < 0 or code >= 1024:
+                    logger.warning(f"c2[{i}] = {code} is out of range.")
         
-        # Create tensor in the format expected by DAC
+        output_codes = [c1, c2]
+        
         try:
-            codes_tensor = torch.tensor([audio_codes], dtype=torch.int64).to(self.device)
-            logger.info(f"Codes tensor shape: {codes_tensor.shape}")
+            with torch.no_grad():
+                # Ensure codes are on the correct device for DAC model
+                dac_input_tensor = torch.tensor([output_codes], dtype=torch.int64).to(self.dac.device)
+                logger.info(f"DAC input tensor shape: {dac_input_tensor.shape}, device: {dac_input_tensor.device}")
+                audio_output = self.dac.decode(dac_input_tensor)
+                audio_output = audio_output.squeeze(0).cpu() # Remove batch dim, move to CPU
+            logger.info(f"Audio generated by DAC, shape: {audio_output.shape}")
         except Exception as e:
-            logger.error(f"Error creating codes tensor: {e}")
+            logger.error(f"Error during DAC decoding: {e}")
+            logger.error(f"Problematic output_codes (first 5 of each): c1: {c1[:5]}, c2: {c2[:5]}")
             return False
 
-        # Decode using DAC
-        logger.info("Decoding audio codes to audio...")
         try:
-            audio_waveform = self.dac.decode(codes_tensor)
+            sf.write(output_file, audio_output, samplerate=sample_rate)
+            logger.info(f"Speech successfully generated and saved to {output_file}")
+            return True
         except Exception as e:
-            logger.error(f"Error decoding audio: {e}")
-            logger.error(f"Codes tensor shape: {codes_tensor.shape}, dtype: {codes_tensor.dtype}")
+            logger.error(f"Error saving audio file {output_file}: {e}")
             return False
-
-        if audio_waveform is None or audio_waveform.ndim == 0 or audio_waveform.shape[-1] == 0:
-            logger.error("DAC decoding resulted in empty or invalid audio.")
-            return False
-
-        # Ensure audio is 1D numpy array for soundfile
-        audio_numpy = audio_waveform.squeeze().cpu().numpy()
-        if audio_numpy.ndim > 1: # If still 2D (e.g. [1, L]), squeeze further if L=1, or take first channel.
-            audio_numpy = audio_numpy.squeeze()
-            if audio_numpy.ndim > 1 and audio_numpy.shape[0] == 1 : # handles case like [1,L]
-                audio_numpy = audio_numpy[0]
-            elif audio_numpy.ndim > 1 :
-                logger.warning(f"Decoded audio is multi-channel ({audio_numpy.shape}), taking first channel.")
-                audio_numpy = audio_numpy[0]
-
-
-        logger.info(f"Saving audio to {output_file} (Sample Rate: {sample_rate})...")
-        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-        sf.write(output_file, audio_numpy, sample_rate) # DAC output SR might differ, use dac.sample_rate
-        logger.info("Speech generation complete!")
-        return True
 
 def main():
     """Main function"""

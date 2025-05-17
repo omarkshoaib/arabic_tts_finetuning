@@ -246,16 +246,18 @@ run_inference() {
 
   # Log the command that will be executed
   # Use printf for safer expansion of arguments, especially if they contain spaces or special chars
-  printf "Running command: python3 src/inference/generate.py"
+  printf "Running command: python3 -u src/inference/generate.py"
   for arg in "${CMD_PY_ARGS[@]}"; do
     printf " '%s'" "$arg" # Print each argument quoted
   done
   printf "\\n"
 
   # Execute the python script
-  python3 "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}"
-  
-  log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH (verify generate.py behavior)"
+  if python3 -u "${SCRIPT_DIR}/src/inference/generate.py" "${CMD_PY_ARGS[@]}"; then # Added -u for unbuffered output
+    log_message "INFO" "Inference complete! Output potentially saved to: $FINAL_OUTPUT_FILE_PATH (verify generate.py behavior)"
+  else
+    log_message "ERROR" "Inference script failed. Check logs above."
+  fi
 }
 
 # Call function to create directories first

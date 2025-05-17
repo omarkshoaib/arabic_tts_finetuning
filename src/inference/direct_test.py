@@ -30,10 +30,10 @@ def main():
     model, tokenizer = FastModel.from_pretrained(
         model_name=MODEL_PATH,
         max_seq_length=MAX_SEQ_LENGTH,
-        dtype=torch.float32,  # Explicitly use float32 as per notebook, can be None for auto
+        dtype=None,  # Let Unsloth choose optimal dtype, was torch.float32
         load_in_4bit=False, # Base model inference, not 4-bit
     )
-    logger.info("Model and tokenizer loaded.")
+    logger.info(f"Model and tokenizer loaded. Model dtype: {model.dtype}")
     
     # Ensure model is on CUDA if available, otherwise CPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,6 +82,7 @@ def main():
     logger.info(f"Using pad_token_id for generation: {gen_pad_token_id}")
     logger.info(f"Generating with max_new_tokens: {max_new_tokens}")
     logger.info(f"Generation params: temp={temperature}, top_k={top_k}, top_p={top_p}, rep_penalty={repetition_penalty}, min_p={min_p}")
+    logger.info(f"Calling model.generate() with input_ids_length: {input_ids_length}, max_new_tokens: {max_new_tokens}")
 
     # Generate tokens
     logger.info("Generating token sequence...")
@@ -98,6 +99,7 @@ def main():
         )
     logger.info("Token sequence generated.")
     logger.info(f"Generated token IDs shape: {generated_ids.shape}")
+    logger.info(f"Total generated sequence length (prompt + new tokens): {generated_ids.shape[1]}")
     logger.info(f"Generated token IDs (first 50): {generated_ids[0, :50].tolist()}")
 
     # Decode the *entire* output for token extraction

@@ -41,46 +41,43 @@ class OuteTTSGeneratorV3:
         Initialize the OuteTTS v3 generator.
         """
         self.device = device
+        self.max_seq_length = max_seq_length
         self.use_lora = use_lora
-        
-        logger.info(f"Initializing OuteTTS v3 generator.")
-        logger.info(f"Using LoRA: {use_lora}")
-        logger.info(f"Model/Adapter path: {model_path}")
-        logger.info(f"Base model: {base_model_name}")
-        logger.info(f"Device: {device}")
+        self.model_path = model_path
+        self.base_model_name = base_model_name
 
-        # Load tokenizer (usually from the base model)
-        logger.info(f"Loading tokenizer from {base_model_name}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        logger.info(f"Initializing OuteTTSGeneratorV3. Device: {self.device}, LoRA: {self.use_lora}")
+        logger.info(f"Model path: {self.model_path}, Base model: {self.base_model_name}")
 
-        # Load base model using Unsloth FastModel
-        logger.info(f"Loading base model '{base_model_name}' with Unsloth...")
-        self.model, _ = FastModel.from_pretrained(
-            model_name=base_model_name,
-            max_seq_length=max_seq_length,
-            dtype=torch.float32,
-            load_in_4bit=False, # OuteTTS requires no 4-bit
-            device_map=self.device, # Map model to device
-        )
-        
-        # Load LoRA adapter if necessary
-        if use_lora:
-            logger.info(f"Loading and merging LoRA adapter from: {model_path}")
-            try:
-                self.model = PeftModel.from_pretrained(self.model, model_path)
-                # If you want to merge LoRA weights for faster inference (optional, increases memory)
-                # self.model = self.model.merge_and_unload() 
-                logger.info("LoRA adapter loaded successfully.")
-            except Exception as e:
-                logger.error(f"Error loading LoRA adapter: {e}. Check if model_path is correct and contains adapter_model.bin/safetensors.")
-                raise
+        if self.use_lora:
+            logger.info(f"Loading base model '{self.base_model_name}' with LoRA adapter from '{self.model_path}'")
+            self.model, self.tokenizer = FastModel.from_pretrained(
+                model_name=self.base_model_name,
+                max_seq_length=self.max_seq_length,
+                dtype=None, # Let Unsloth choose optimal dtype for base
+                load_in_4bit=False, # Base model is not 4-bit when using LoRA
+            )
+            logger.info(f"Base model loaded with dtype: {self.model.dtype}")
+            self.model = FastModel.get_peft_model(
+                self.model,
+                self.model_path,
+                # r = 16, # default
+                # lora_alpha = 16, # default
+            )
+            logger.info("LoRA adapter loaded and merged.")
         else:
-            # If not using LoRA, model_path should be a full fine-tuned model
-            # For now, we assume Unsloth's from_pretrained handled this if model_path = base_model_name
-            # If model_path is a different full model, this part might need adjustment or rely on HF from_pretrained
-            logger.info(f"Using model from {model_path} without LoRA.")
+            logger.info(f"Loading full model from '{self.model_path}' (no LoRA)")
+            self.model, self.tokenizer = FastModel.from_pretrained(
+                model_name=self.model_path, # This is the base model itself when not using LoRA
+                max_seq_length=self.max_seq_length,
+                dtype=None, # Let Unsloth choose optimal dtype
+                load_in_4bit=False, # Assuming base model inference is not 4-bit
+            )
+            logger.info(f"Full model loaded with dtype: {self.model.dtype}")
 
-
+        self.model.to(self.device)
+        logger.info(f"Model moved to device: {self.device}")
+        
         # Initialize DAC
         logger.info("Initializing DAC interface...")
         # The DacInterface expects device and optionally model_path (dac_ckpt),
@@ -160,6 +157,7 @@ class OuteTTSGeneratorV3:
         # Generation parameters based on the notebook
         logger.info(f"Generating with max_new_tokens: {max_new_tokens}")
         logger.info(f"Generation params: temp={temperature}, top_k={top_k}, top_p={top_p}, rep_penalty={repetition_penalty}, min_p={min_p}")
+        logger.info(f"Calling model.generate() with input_ids_length: {input_ids_length}, max_new_tokens: {max_new_tokens}")
 
         with torch.no_grad():
             generated_ids = self.model.generate(
@@ -178,6 +176,7 @@ class OuteTTSGeneratorV3:
             )
         
         logger.info(f"Generated token IDs shape: {generated_ids.shape}")
+        logger.info(f"Total generated sequence length (prompt + new tokens): {generated_ids.shape[1]}")
         logger.info(f"Generated token IDs (first 50): {generated_ids[0, :50].tolist()}")
 
         # Decode the *entire* output (including prompt) as done in the notebook for token extraction
